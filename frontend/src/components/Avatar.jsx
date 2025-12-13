@@ -1,15 +1,12 @@
 import { useEffect, useRef, useMemo } from "react";
-import { useFrame, useGraph } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import { useGLTF, useFBX, useAnimations } from "@react-three/drei";
-import { SkeletonUtils } from "three-stdlib";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
 export const Avatar = (props) => {
-  // 1. LOAD MODEL (And Clone it to be safe)
-  const { scene } = useGLTF("/models/monika_v99.glb");
-  const clone = useMemo(() => SkeletonUtils.clone(scene), [scene]);
-  const { nodes } = useGraph(clone);
+  // 1. LOAD MODEL
+  const { nodes, materials } = useGLTF("/models/monika_v99.glb");
 
   // 2. LOAD ANIMATIONS
   const { animations: idleAnim } = useFBX("/animations/Standing Idle.fbx");
@@ -43,7 +40,6 @@ export const Avatar = (props) => {
   const { actions } = useAnimations(allAnimations, group);
   const { message, onMessagePlayed, loading } = useChat();
   
-  // Audio Setup
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
@@ -95,17 +91,9 @@ export const Avatar = (props) => {
     }
   }, [message]);
 
-  // --- LIP SYNC FRAME LOOP ---
+  // --- LIP SYNC ---
   useFrame(() => {
-    // Find the nodes in the CLONED scene
-    const head = nodes.Wolf3D_Head;
-    const teeth = nodes.Wolf3D_Teeth;
-
-    if (!head || !teeth) return;
-
-    // Fix Frustum Culling (Prevents flickering/disappearing)
-    head.frustumCulled = false;
-    teeth.frustumCulled = false;
+    if (!nodes.Wolf3D_Head || !nodes.Wolf3D_Teeth) return;
 
     const audio = audioRef.current;
     let mouthOpenValue = 0;
@@ -118,21 +106,94 @@ export const Avatar = (props) => {
       mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
     }
 
-    // Apply Morph Targets
     const targetValue = THREE.MathUtils.lerp(
-        head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]],
+        nodes.Wolf3D_Head.morphTargetInfluences[nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]],
         mouthOpenValue,
         0.5
     );
 
-    head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]] = targetValue;
-    teeth.morphTargetInfluences[teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
+    nodes.Wolf3D_Head.morphTargetInfluences[nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]] = targetValue;
+    nodes.Wolf3D_Teeth.morphTargetInfluences[nodes.Wolf3D_Teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
   });
 
   return (
     <group ref={group} {...props} dispose={null}>
-      {/* RENDER THE ENTIRE SCENE AUTOMATICALLY */}
-      <primitive object={clone} />
+      <primitive object={nodes.Hips} />
+
+      {/* HEAD & FACE */}
+      <skinnedMesh 
+        name="Wolf3D_Head"
+        geometry={nodes.Wolf3D_Head.geometry} 
+        material={nodes.Wolf3D_Head.material} 
+        skeleton={nodes.Wolf3D_Head.skeleton} 
+        morphTargetDictionary={nodes.Wolf3D_Head.morphTargetDictionary}
+        morphTargetInfluences={nodes.Wolf3D_Head.morphTargetInfluences}
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="Wolf3D_Teeth"
+        geometry={nodes.Wolf3D_Teeth.geometry} 
+        material={nodes.Wolf3D_Teeth.material} 
+        skeleton={nodes.Wolf3D_Teeth.skeleton} 
+        morphTargetDictionary={nodes.Wolf3D_Teeth.morphTargetDictionary}
+        morphTargetInfluences={nodes.Wolf3D_Teeth.morphTargetInfluences}
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="Wolf3D_Hair"
+        geometry={nodes.Wolf3D_Hair.geometry} 
+        material={nodes.Wolf3D_Hair.material} 
+        skeleton={nodes.Wolf3D_Hair.skeleton} 
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="EyeLeft"
+        geometry={nodes.EyeLeft.geometry} 
+        material={nodes.EyeLeft.material} 
+        skeleton={nodes.EyeLeft.skeleton} 
+        morphTargetDictionary={nodes.EyeLeft.morphTargetDictionary}
+        morphTargetInfluences={nodes.EyeLeft.morphTargetInfluences}
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="EyeRight"
+        geometry={nodes.EyeRight.geometry} 
+        material={nodes.EyeRight.material} 
+        skeleton={nodes.EyeRight.skeleton} 
+        morphTargetDictionary={nodes.EyeRight.morphTargetDictionary}
+        morphTargetInfluences={nodes.EyeRight.morphTargetInfluences}
+        frustumCulled={false}
+      />
+
+      {/* BODY PARTS - WITH FRUSTUM CULLING DISABLED */}
+      <skinnedMesh 
+        name="Wolf3D_Body"
+        geometry={nodes.Wolf3D_Body.geometry} 
+        material={nodes.Wolf3D_Body.material} 
+        skeleton={nodes.Wolf3D_Body.skeleton} 
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="Wolf3D_Outfit_Top"
+        geometry={nodes.Wolf3D_Outfit_Top.geometry} 
+        material={nodes.Wolf3D_Outfit_Top.material} 
+        skeleton={nodes.Wolf3D_Outfit_Top.skeleton} 
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="Wolf3D_Outfit_Bottom"
+        geometry={nodes.Wolf3D_Outfit_Bottom.geometry} 
+        material={nodes.Wolf3D_Outfit_Bottom.material} 
+        skeleton={nodes.Wolf3D_Outfit_Bottom.skeleton} 
+        frustumCulled={false}
+      />
+      <skinnedMesh 
+        name="Wolf3D_Outfit_Footwear"
+        geometry={nodes.Wolf3D_Outfit_Footwear.geometry} 
+        material={nodes.Wolf3D_Outfit_Footwear.material} 
+        skeleton={nodes.Wolf3D_Outfit_Footwear.skeleton} 
+        frustumCulled={false}
+      />
     </group>
   );
 };
