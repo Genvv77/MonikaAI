@@ -1,15 +1,13 @@
 import { useEffect, useRef, useMemo } from "react";
-import { useFrame, useGraph } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import { useGLTF, useFBX, useAnimations } from "@react-three/drei";
-import { SkeletonUtils } from "three-stdlib";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
 export const Avatar = (props) => {
-  // 1. LOAD MODEL (And Clone it safely to avoid bugs)
+  // 1. SIMPLEST POSSIBLE LOAD
+  // We load the scene directly. No cloning, no node extraction.
   const { scene } = useGLTF("/models/monika_v99.glb");
-  const clone = useMemo(() => SkeletonUtils.clone(scene), [scene]);
-  const { nodes } = useGraph(clone);
 
   // 2. LOAD ANIMATIONS
   const { animations: idleAnim } = useFBX("/animations/Standing Idle.fbx");
@@ -47,25 +45,13 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
-  // --- 5. THE "INVISIBLE BODY" FIX ---
-  // This runs ONCE when the model loads. It finds every mesh and forces it to draw.
-  useEffect(() => {
-    clone.traverse((child) => {
-      if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-        child.frustumCulled = false; // <--- THIS PREVENTS DISAPPEARING
-      }
-    });
-  }, [clone]);
-
   // --- ANIMATION CONTROLLER ---
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"];
-    if (!actionToPlay) actionToPlay = Object.values(actions)[0];
+    if (!actionToPlay) actionToPlay = Object.values(actions)[0]; // Fallback
 
     if (loading) {
-       // Optional: actionToPlay = actions["Terrified"];
+       // actionToPlay = actions["Thinking"]; 
     }
     
     if (message && message.animation && actions[message.animation]) {
@@ -108,37 +94,42 @@ export const Avatar = (props) => {
 
   // --- LIP SYNC ---
   useFrame(() => {
-    // We access the nodes from the cloned graph safely
-    const head = nodes.Wolf3D_Head;
-    const teeth = nodes.Wolf3D_Teeth;
+    // 5. SAFE FINDER - Instead of crashing if nodes are missing, we look for them safely
+    const head = scene.getObjectByName("Wolf3D_Head");
+    const teeth = scene.getObjectByName("Wolf3D_Teeth");
 
-    if (!head || !teeth) return;
+    if (head && teeth) {
+        // Frustum Culling Hack - Prevents disappearing
+        head.frustumCulled = false;
+        teeth.frustumCulled = false;
 
-    const audio = audioRef.current;
-    let mouthOpenValue = 0;
+        const audio = audioRef.current;
+        let mouthOpenValue = 0;
 
-    if (!audio.paused && !audio.ended && analyserRef.current) {
-      analyserRef.current.getByteFrequencyData(dataArrayRef.current);
-      let sum = 0;
-      for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
-      const average = sum / 40; 
-      mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+        if (!audio.paused && !audio.ended && analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+            let sum = 0;
+            for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
+            const average = sum / 40; 
+            mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+        }
+
+        // Apply Morph
+        const targetValue = THREE.MathUtils.lerp(
+            head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]],
+            mouthOpenValue,
+            0.5
+        );
+
+        head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]] = targetValue;
+        teeth.morphTargetInfluences[teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
     }
-
-    const targetValue = THREE.MathUtils.lerp(
-        head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]],
-        mouthOpenValue,
-        0.5
-    );
-
-    head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]] = targetValue;
-    teeth.morphTargetInfluences[teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
   });
 
   return (
     <group ref={group} {...props} dispose={null}>
-      {/* RENDER THE FULL CLONED SCENE (Guarantees all body parts show) */}
-      <primitive object={clone} />
+      {/* 6. RENDER EVERYTHING EXACTLY AS IS */}
+      <primitive object={scene} />
     </group>
   );
 };
