@@ -1,151 +1,176 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
-import { useGLTF, useFBX, useAnimations } from "@react-three/drei";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
 export const Avatar = (props) => {
-  // 1. LOAD THE SCENE DIRECTLY
-  const { scene } = useGLTF("/models/monika_v99.glb");
-
-  // 2. LOAD ANIMATIONS
-  const { animations: idleAnim } = useFBX("/animations/Standing Idle.fbx");
-  const { animations: angryAnim } = useFBX("/animations/Angry.fbx");
-  const { animations: cryingAnim } = useFBX("/animations/Crying.fbx");
-  const { animations: laughingAnim } = useFBX("/animations/Laughing.fbx");
-  const { animations: rumbaAnim } = useFBX("/animations/Rumba Dancing.fbx");
-  const { animations: terrifiedAnim } = useFBX("/animations/Terrified.fbx");
-  const { animations: talking0Anim } = useFBX("/animations/Talking_0.fbx");
-  const { animations: talking1Anim } = useFBX("/animations/Talking_1.fbx");
-  const { animations: talking2Anim } = useFBX("/animations/Talking_2.fbx");
-
-  // 3. NAME ANIMATIONS
-  idleAnim[0].name = "Standing_Idle";
-  angryAnim[0].name = "Angry";
-  cryingAnim[0].name = "Crying";
-  laughingAnim[0].name = "Laughing";
-  rumbaAnim[0].name = "Rumba_Dancing";
-  terrifiedAnim[0].name = "Terrified";
-  talking0Anim[0].name = "Talking_0";
-  talking1Anim[0].name = "Talking_1";
-  talking2Anim[0].name = "Talking_2";
-
-  const allAnimations = useMemo(() => [
-    idleAnim[0], angryAnim[0], cryingAnim[0], laughingAnim[0], rumbaAnim[0], 
-    terrifiedAnim[0], talking0Anim[0], talking1Anim[0], talking2Anim[0]
-  ], [idleAnim, angryAnim, cryingAnim, laughingAnim, rumbaAnim, terrifiedAnim, talking0Anim, talking1Anim, talking2Anim]);
-
-  // 4. SETUP MIXER
-  const group = useRef();
-  const { actions } = useAnimations(allAnimations, group);
-  const { message, onMessagePlayed, loading } = useChat();
+  const { nodes, materials } = useGLTF("/models/monika_v99.glb"); // Make sure path is correct
+  const { message, onMessagePlayed } = useChat();
   
+  const [lipsync, setLipsync] = useState(null);
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
-  // --- 5. THE CRITICAL FIX (RUNS ONCE ON LOAD) ---
+  // --- 1. NETTOYAGE ANIMATIONS ---
+  const { animations } = useGLTF("/models/animations.glb");
+  const group = useRef();
+  const { actions } = useAnimations(animations, group);
+  const [animation, setAnimation] = useState("Idle");
+
   useEffect(() => {
-    scene.traverse((child) => {
-      if (child.isMesh) {
-        // A. FORCE VISIBILITY
-        child.frustumCulled = false; 
-        
-        // B. FORCE SHADOWS
-        child.castShadow = true;
-        child.receiveShadow = true;
-
-        // C. RECALCULATE BOUNDING BOX (Fixes "Invisible Body" bug)
-        if (child.geometry) {
-             child.geometry.computeBoundingBox();
-             child.geometry.computeBoundingSphere();
-        }
-      }
-    });
-  }, [scene]);
-
-  // --- ANIMATION CONTROLLER ---
-  useEffect(() => {
-    let actionToPlay = actions["Standing_Idle"];
-    if (!actionToPlay) actionToPlay = Object.values(actions)[0];
-
-    if (loading) {
-       // Optional: actionToPlay = actions["Terrified"];
+    if (animations) {
+      animations.forEach((clip) => {
+        clip.tracks = clip.tracks.filter((track) => {
+          // On supprime tout ce qui touche aux morphs pour éviter les conflits
+          return !track.name.includes("morphTargetInfluences");
+        });
+      });
     }
+  }, [animations]);
+
+  // --- 2. AUDIO ---
+  useEffect(() => {
+    // 1. Si pas de message, on reset
+    if (!message) {
+      setAnimation("Idle");
+      return;
+    }
+
+    // 2. On lance l'animation (même sans audio, elle doit bouger un peu)
+    setAnimation(message.animation || "Idle");
+    setLipsync(message.lipsync);
+
+    // 3. CAS SANS AUDIO (Le fix de sécurité)
+    if (!message.audio) {
+        console.log("⚠️ Message sans audio détecté. Passage automatique dans 3s.");
+        setTimeout(() => {
+            setAnimation("Idle");
+            onMessagePlayed(); 
+        }, 3000); // On laisse le temps de lire la bulle
+        return;   // On arrête ici pour ce message
+    }
+
+    // 4. CAS AVEC AUDIO (Normal)
+    const newAudio = new Audio("data:audio/mp3;base64," + message.audio);
+    newAudio.volume = 1.0;
     
-    if (message && message.animation && actions[message.animation]) {
-      actionToPlay = actions[message.animation];
-    } 
-    else if (message && message.audio) {
-       actionToPlay = actions["Talking_1"];
-    }
+    newAudio.play().catch((e) => {
+        console.error("Erreur lecture audio:", e);
+        // Si l'audio plante à la lecture, on force le passage
+        onMessagePlayed();
+    });
 
-    if (actionToPlay) {
-      actionToPlay.reset().fadeIn(0.5).play();
-      return () => { actionToPlay.fadeOut(0.5); };
-    }
-  }, [message, loading, actions]);
-
-  // --- AUDIO SETUP ---
-  useEffect(() => {
-    if (!analyserRef.current) {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      const source = audioContext.createMediaElementSource(audioRef.current);
-      source.connect(analyser);
-      source.connect(audioContext.destination);
-      analyserRef.current = analyser;
-      dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (message && message.audio) {
-      const audio = audioRef.current;
-      audio.src = message.audio;
-      audio.currentTime = 0;
-      if (analyserRef.current.context.state === 'suspended') analyserRef.current.context.resume();
-      audio.play().catch(e => console.error("Playback error:", e));
-      audio.onended = onMessagePlayed;
-    }
+    setAudio(newAudio);
+    
+    newAudio.onended = () => {
+      setAnimation("Idle");
+      onMessagePlayed();
+    };
+    
   }, [message]);
 
-  // --- LIP SYNC ---
+  useEffect(() => {
+    const anim = actions[animation] ? animation : "Idle";
+    if (actions[anim]) {
+      actions[anim].reset().fadeIn(0.5).play();
+      return () => actions[anim]?.fadeOut(0.5);
+    }
+  }, [animation, actions]);
+
+  // --- 3. SYNCRO DENTS & VISAGE ---
   useFrame(() => {
-    // SAFELY Find the head in the scene
-    const head = scene.getObjectByName("Wolf3D_Head");
-    const teeth = scene.getObjectByName("Wolf3D_Teeth");
+    if (!audio || audio.paused) {
+      // Fermeture propre
+      if (nodes.Wolf3D_Head) {
+          const idx = nodes.Wolf3D_Head.morphTargetDictionary["mouthOpen"];
+          if (idx !== undefined) nodes.Wolf3D_Head.morphTargetInfluences[idx] = 0;
+      }
+      if (nodes.Wolf3D_Teeth) {
+          const idx = nodes.Wolf3D_Teeth.morphTargetDictionary["mouthOpen"];
+          if (idx !== undefined) nodes.Wolf3D_Teeth.morphTargetInfluences[idx] = 0;
+      }
+      return;
+    }
 
-    if (head && teeth) {
-        const audio = audioRef.current;
-        let mouthOpenValue = 0;
+    const currentAudioTime = audio.currentTime;
+    let target = 0;
 
-        if (!audio.paused && !audio.ended && analyserRef.current) {
-            analyserRef.current.getByteFrequencyData(dataArrayRef.current);
-            let sum = 0;
-            for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
-            const average = sum / 40; 
-            mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+    if (lipsync) {
+      for (let i = 0; i < lipsync.mouthCues.length; i++) {
+        const cue = lipsync.mouthCues[i];
+        if (currentAudioTime >= cue.start && currentAudioTime <= cue.end) {
+          // Mapping simplifié pour mouthOpen
+          switch (cue.value) {
+            case "X": target = 0; break;
+            case "A": target = 1.0; break;
+            case "B": target = 0; break;
+            case "C": target = 0.5; break;
+            case "D": target = 0.8; break;
+            case "E": target = 0.5; break;
+            case "F": target = 0.3; break;
+            case "G": target = 0.5; break;
+            case "H": target = 0.6; break;
+            default: target = 0; break;
+          }
+          break;
         }
+      }
+    }
 
-        const targetValue = THREE.MathUtils.lerp(
-            head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]],
-            mouthOpenValue,
-            0.5
-        );
+    // --- APPLICATION CRITIQUE ---
+    
+    // 1. VISAGE (Wolf3D_Head)
+    if (nodes.Wolf3D_Head) {
+        const headIdx = nodes.Wolf3D_Head.morphTargetDictionary["mouthOpen"];
+        if (headIdx !== undefined) {
+            nodes.Wolf3D_Head.morphTargetInfluences[headIdx] = THREE.MathUtils.lerp(
+                nodes.Wolf3D_Head.morphTargetInfluences[headIdx],
+                target,
+                0.8
+            );
+        }
+        // Petit sourire pour la forme
+        const smileIdx = nodes.Wolf3D_Head.morphTargetDictionary["mouthSmile"];
+        if (smileIdx !== undefined) nodes.Wolf3D_Head.morphTargetInfluences[smileIdx] = 0.2;
+    }
 
-        head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]] = targetValue;
-        teeth.morphTargetInfluences[teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
+    // 2. DENTS (Wolf3D_Teeth) - C'est ICI que ça se joue
+    // On applique EXACTEMENT la même ouverture aux dents
+    if (nodes.Wolf3D_Teeth) {
+        const teethIdx = nodes.Wolf3D_Teeth.morphTargetDictionary["mouthOpen"];
+        if (teethIdx !== undefined) {
+            nodes.Wolf3D_Teeth.morphTargetInfluences[teethIdx] = THREE.MathUtils.lerp(
+                nodes.Wolf3D_Teeth.morphTargetInfluences[teethIdx],
+                target,
+                0.8
+            );
+        }
     }
   });
 
   return (
-    <group ref={group} {...props} dispose={null}>
-      {/* RENDER THE SCENE DIRECTLY */}
-      <primitive object={scene} />
+    <group {...props} dispose={null} ref={group}>
+      <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
+      {Object.keys(nodes).map((name) => {
+        if (nodes[name].isSkinnedMesh) {
+          return (
+            <skinnedMesh
+              key={name}
+              geometry={nodes[name].geometry}
+              material={nodes[name].material}
+              skeleton={nodes[name].skeleton}
+              morphTargetDictionary={nodes[name].morphTargetDictionary}
+              morphTargetInfluences={nodes[name].morphTargetInfluences}
+            />
+          );
+        }
+        return null;
+      })}
     </group>
   );
-};
+}
 
 useGLTF.preload("/models/monika_v99.glb");
+useGLTF.preload("/models/animations.glb");
