@@ -8,12 +8,7 @@ export const Avatar = (props) => {
   // 1. LOAD THE AVATAR MESH
   const { nodes, materials } = useGLTF("/models/monika_v99.glb");
 
-  // 🔴 DEBUGGING: Print the real mesh names to the console
-  useEffect(() => {
-    console.log("🔍 MODEL NODES FOUND:", Object.keys(nodes));
-  }, [nodes]);
-
-  // 2. LOAD YOUR FBX ANIMATIONS
+  // 2. LOAD ANIMATIONS
   const { animations: idleAnim } = useFBX("/animations/Standing Idle.fbx");
   const { animations: angryAnim } = useFBX("/animations/Angry.fbx");
   const { animations: cryingAnim } = useFBX("/animations/Crying.fbx");
@@ -24,7 +19,7 @@ export const Avatar = (props) => {
   const { animations: talking1Anim } = useFBX("/animations/Talking_1.fbx");
   const { animations: talking2Anim } = useFBX("/animations/Talking_2.fbx");
 
-  // 3. NAME THEM CORRECTLY
+  // 3. NAME ANIMATIONS
   idleAnim[0].name = "Standing_Idle";
   angryAnim[0].name = "Angry";
   cryingAnim[0].name = "Crying";
@@ -40,7 +35,7 @@ export const Avatar = (props) => {
     terrifiedAnim[0], talking0Anim[0], talking1Anim[0], talking2Anim[0]
   ], [idleAnim, angryAnim, cryingAnim, laughingAnim, rumbaAnim, terrifiedAnim, talking0Anim, talking1Anim, talking2Anim]);
 
-  // 4. SETUP ANIMATION MIXER
+  // 4. SETUP MIXER
   const group = useRef();
   const { actions } = useAnimations(allAnimations, group);
   const { message, onMessagePlayed, loading } = useChat();
@@ -53,9 +48,14 @@ export const Avatar = (props) => {
   // --- ANIMATION CONTROLLER ---
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"];
+    
+    // Fallback if idle isn't found
+    if (!actionToPlay) actionToPlay = Object.values(actions)[0];
+
     if (loading) {
        // Optional: actionToPlay = actions["Terrified"];
     }
+    
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
     } 
@@ -70,7 +70,7 @@ export const Avatar = (props) => {
   }, [message, loading, actions]);
 
 
-  // --- AUDIO & LIP SYNC ---
+  // --- AUDIO SETUP ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -95,98 +95,112 @@ export const Avatar = (props) => {
     }
   }, [message]);
 
+  // --- LIP SYNC FRAME LOOP ---
   useFrame(() => {
-    if (!nodes.Wolf3D_Head) return;
+    // We need both Head and Teeth for lip sync
+    if (!nodes.Wolf3D_Head || !nodes.Wolf3D_Teeth) return;
 
     const audio = audioRef.current;
+    let mouthOpenValue = 0;
+
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
       for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
       const average = sum / 40; 
-      const mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      
-      nodes.Wolf3D_Head.morphTargetInfluences[
-        nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]
-      ] = THREE.MathUtils.lerp(
+      mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+    }
+
+    // SMOOTH ANIMATION
+    const targetValue = THREE.MathUtils.lerp(
         nodes.Wolf3D_Head.morphTargetInfluences[
           nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]
         ],
         mouthOpenValue,
         0.5
-      );
-    } else {
-      nodes.Wolf3D_Head.morphTargetInfluences[
+    );
+
+    // Apply to HEAD
+    nodes.Wolf3D_Head.morphTargetInfluences[
         nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]
-      ] = THREE.MathUtils.lerp(
-        nodes.Wolf3D_Head.morphTargetInfluences[
-          nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]
-        ],
-        0,
-        0.1
-      );
-    }
+    ] = targetValue;
+
+    // Apply to TEETH (So they move with the jaw)
+    nodes.Wolf3D_Teeth.morphTargetInfluences[
+        nodes.Wolf3D_Teeth.morphTargetDictionary["viseme_aa"]
+    ] = targetValue;
   });
 
   return (
     <group ref={group} {...props} dispose={null}>
-      {/* 1. THE SKELETON (HIPS) - Usually always exists */}
+      {/* 1. SKELETON */}
       <primitive object={nodes.Hips} />
 
-      {/* 2. THE HEAD - We check if it exists first */}
-      {nodes.Wolf3D_Head && (
-        <skinnedMesh
-            name="Wolf3D_Head"
-            geometry={nodes.Wolf3D_Head.geometry}
-            material={materials.Wolf3D_Skin}
-            skeleton={nodes.Wolf3D_Head.skeleton}
-            morphTargetDictionary={nodes.Wolf3D_Head.morphTargetDictionary}
-            morphTargetInfluences={nodes.Wolf3D_Head.morphTargetInfluences}
-        />
-      )}
+      {/* 2. FACE & HAIR (Based on your node list) */}
+      <skinnedMesh
+        name="Wolf3D_Head"
+        geometry={nodes.Wolf3D_Head.geometry}
+        material={materials.Wolf3D_Skin}
+        skeleton={nodes.Wolf3D_Head.skeleton}
+        morphTargetDictionary={nodes.Wolf3D_Head.morphTargetDictionary}
+        morphTargetInfluences={nodes.Wolf3D_Head.morphTargetInfluences}
+      />
+      <skinnedMesh
+        name="Wolf3D_Teeth"
+        geometry={nodes.Wolf3D_Teeth.geometry}
+        material={materials.Wolf3D_Teeth}
+        skeleton={nodes.Wolf3D_Teeth.skeleton}
+        morphTargetDictionary={nodes.Wolf3D_Teeth.morphTargetDictionary}
+        morphTargetInfluences={nodes.Wolf3D_Teeth.morphTargetInfluences}
+      />
+      <skinnedMesh
+        name="Wolf3D_Hair"
+        geometry={nodes.Wolf3D_Hair.geometry}
+        material={materials.Wolf3D_Hair}
+        skeleton={nodes.Wolf3D_Hair.skeleton}
+      />
+      <skinnedMesh
+        name="EyeLeft"
+        geometry={nodes.EyeLeft.geometry}
+        material={materials.Wolf3D_Eye}
+        skeleton={nodes.EyeLeft.skeleton}
+        morphTargetDictionary={nodes.EyeLeft.morphTargetDictionary}
+        morphTargetInfluences={nodes.EyeLeft.morphTargetInfluences}
+      />
+      <skinnedMesh
+        name="EyeRight"
+        geometry={nodes.EyeRight.geometry}
+        material={materials.Wolf3D_Eye}
+        skeleton={nodes.EyeRight.skeleton}
+        morphTargetDictionary={nodes.EyeRight.morphTargetDictionary}
+        morphTargetInfluences={nodes.EyeRight.morphTargetInfluences}
+      />
 
-      {/* 3. THE BODY PARTS - Safety Checks Added! */}
-      {nodes.Wolf3D_Teeth && (
-        <skinnedMesh
-            geometry={nodes.Wolf3D_Teeth.geometry}
-            material={materials.Wolf3D_Teeth}
-            skeleton={nodes.Wolf3D_Teeth.skeleton}
-            morphTargetDictionary={nodes.Wolf3D_Teeth.morphTargetDictionary}
-            morphTargetInfluences={nodes.Wolf3D_Teeth.morphTargetInfluences}
-        />
-      )}
-
-      {nodes.Wolf3D_Outfit_Top && (
-        <skinnedMesh
-            geometry={nodes.Wolf3D_Outfit_Top.geometry}
-            material={materials.Wolf3D_Outfit_Top}
-            skeleton={nodes.Wolf3D_Outfit_Top.skeleton}
-        />
-      )}
-
-      {nodes.Wolf3D_Outfit_Bottom && (
-        <skinnedMesh
-            geometry={nodes.Wolf3D_Outfit_Bottom.geometry}
-            material={materials.Wolf3D_Outfit_Bottom}
-            skeleton={nodes.Wolf3D_Outfit_Bottom.skeleton}
-        />
-      )}
-
-      {nodes.Wolf3D_Outfit_Footwear && (
-        <skinnedMesh
-            geometry={nodes.Wolf3D_Outfit_Footwear.geometry}
-            material={materials.Wolf3D_Outfit_Footwear}
-            skeleton={nodes.Wolf3D_Outfit_Footwear.skeleton}
-        />
-      )}
-
-      {nodes.Wolf3D_Body && (
-        <skinnedMesh
-            geometry={nodes.Wolf3D_Body.geometry}
-            material={materials.Wolf3D_Body}
-            skeleton={nodes.Wolf3D_Body.skeleton}
-        />
-      )}
+      {/* 3. BODY & CLOTHES */}
+      <skinnedMesh
+        name="Wolf3D_Body"
+        geometry={nodes.Wolf3D_Body.geometry}
+        material={materials.Wolf3D_Body}
+        skeleton={nodes.Wolf3D_Body.skeleton}
+      />
+      <skinnedMesh
+        name="Wolf3D_Outfit_Top"
+        geometry={nodes.Wolf3D_Outfit_Top.geometry}
+        material={materials.Wolf3D_Outfit_Top}
+        skeleton={nodes.Wolf3D_Outfit_Top.skeleton}
+      />
+      <skinnedMesh
+        name="Wolf3D_Outfit_Bottom"
+        geometry={nodes.Wolf3D_Outfit_Bottom.geometry}
+        material={materials.Wolf3D_Outfit_Bottom}
+        skeleton={nodes.Wolf3D_Outfit_Bottom.skeleton}
+      />
+      <skinnedMesh
+        name="Wolf3D_Outfit_Footwear"
+        geometry={nodes.Wolf3D_Outfit_Footwear.geometry}
+        material={materials.Wolf3D_Outfit_Footwear}
+        skeleton={nodes.Wolf3D_Outfit_Footwear.skeleton}
+      />
     </group>
   );
 };
