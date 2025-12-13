@@ -5,8 +5,8 @@ import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
 export const Avatar = (props) => {
-  // 1. LOAD MODEL
-  const { nodes, materials } = useGLTF("/models/monika_v99.glb");
+  // 1. LOAD THE SCENE DIRECTLY
+  const { scene } = useGLTF("/models/monika_v99.glb");
 
   // 2. LOAD ANIMATIONS
   const { animations: idleAnim } = useFBX("/animations/Standing Idle.fbx");
@@ -43,6 +43,26 @@ export const Avatar = (props) => {
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
+
+  // --- 5. THE CRITICAL FIX (RUNS ONCE ON LOAD) ---
+  useEffect(() => {
+    scene.traverse((child) => {
+      if (child.isMesh) {
+        // A. FORCE VISIBILITY
+        child.frustumCulled = false; 
+        
+        // B. FORCE SHADOWS
+        child.castShadow = true;
+        child.receiveShadow = true;
+
+        // C. RECALCULATE BOUNDING BOX (Fixes "Invisible Body" bug)
+        if (child.geometry) {
+             child.geometry.computeBoundingBox();
+             child.geometry.computeBoundingSphere();
+        }
+      }
+    });
+  }, [scene]);
 
   // --- ANIMATION CONTROLLER ---
   useEffect(() => {
@@ -93,66 +113,37 @@ export const Avatar = (props) => {
 
   // --- LIP SYNC ---
   useFrame(() => {
-    // Only run if nodes exist
-    if (!nodes.Wolf3D_Head || !nodes.Wolf3D_Teeth) return;
+    // SAFELY Find the head in the scene
+    const head = scene.getObjectByName("Wolf3D_Head");
+    const teeth = scene.getObjectByName("Wolf3D_Teeth");
 
-    const audio = audioRef.current;
-    let mouthOpenValue = 0;
+    if (head && teeth) {
+        const audio = audioRef.current;
+        let mouthOpenValue = 0;
 
-    if (!audio.paused && !audio.ended && analyserRef.current) {
-      analyserRef.current.getByteFrequencyData(dataArrayRef.current);
-      let sum = 0;
-      for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
-      const average = sum / 40; 
-      mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+        if (!audio.paused && !audio.ended && analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+            let sum = 0;
+            for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
+            const average = sum / 40; 
+            mouthOpenValue = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+        }
+
+        const targetValue = THREE.MathUtils.lerp(
+            head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]],
+            mouthOpenValue,
+            0.5
+        );
+
+        head.morphTargetInfluences[head.morphTargetDictionary["viseme_aa"]] = targetValue;
+        teeth.morphTargetInfluences[teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
     }
-
-    const targetValue = THREE.MathUtils.lerp(
-        nodes.Wolf3D_Head.morphTargetInfluences[nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]],
-        mouthOpenValue,
-        0.5
-    );
-
-    nodes.Wolf3D_Head.morphTargetInfluences[nodes.Wolf3D_Head.morphTargetDictionary["viseme_aa"]] = targetValue;
-    nodes.Wolf3D_Teeth.morphTargetInfluences[nodes.Wolf3D_Teeth.morphTargetDictionary["viseme_aa"]] = targetValue;
   });
-
-  // --- RENDER HELPER ---
-  // This helper function safely renders a mesh only if it exists in the file
-  const renderSkinnedMesh = (nodeName) => {
-    const node = nodes[nodeName];
-    if (!node) return null; // Skip if missing
-    
-    return (
-      <skinnedMesh
-        name={nodeName}
-        geometry={node.geometry}
-        material={node.material}
-        skeleton={node.skeleton}
-        morphTargetDictionary={node.morphTargetDictionary}
-        morphTargetInfluences={node.morphTargetInfluences}
-        frustumCulled={false} // <--- CRITICAL: Forces it to stay visible
-      />
-    );
-  };
 
   return (
     <group ref={group} {...props} dispose={null}>
-      {/* 1. RENDER SKELETON */}
-      <primitive object={nodes.Hips} />
-
-      {/* 2. RENDER HEAD & FACE */}
-      {renderSkinnedMesh("Wolf3D_Head")}
-      {renderSkinnedMesh("Wolf3D_Teeth")}
-      {renderSkinnedMesh("Wolf3D_Hair")}
-      {renderSkinnedMesh("EyeLeft")}
-      {renderSkinnedMesh("EyeRight")}
-
-      {/* 3. RENDER BODY & CLOTHES */}
-      {renderSkinnedMesh("Wolf3D_Body")}
-      {renderSkinnedMesh("Wolf3D_Outfit_Top")}
-      {renderSkinnedMesh("Wolf3D_Outfit_Bottom")}
-      {renderSkinnedMesh("Wolf3D_Outfit_Footwear")}
+      {/* RENDER THE SCENE DIRECTLY */}
+      <primitive object={scene} />
     </group>
   );
 };
