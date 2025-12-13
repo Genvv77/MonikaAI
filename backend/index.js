@@ -52,7 +52,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const port = 3000;
 let sessions = {};
 
 // --- 2. MÉMOIRE (Chargement & Sauvegarde) ---
@@ -351,6 +350,13 @@ app.delete("/chat/:userId/:index", async (req, res) => {
     res.json({ success: true });
 });
 
-app.listen(port, () => {
-    console.log(`=== Monika Backend (Gemma-3-27b | RateLimit: ${MAX_MSG_PER_MINUTE}/min) ===`);
-});
+// NEW CODE (Add this at the very end)
+const port = process.env.PORT || 3000;
+
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
+
+export default app; // Crucial for Vercel!
