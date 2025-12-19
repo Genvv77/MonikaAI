@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
@@ -19,9 +19,14 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
-  // --- 3. ANIMATION CONTROLLER ---
+  // --- 3. DYNAMICALLY FIND TEETH ---
+  // This finds the teeth node regardless of exact name (e.g. Wolf3D_Teeth)
+  const teethNode = useMemo(() => {
+    return Object.values(nodes).find((node) => node.name.includes("Teeth"));
+  }, [nodes]);
+
+  // --- 4. ANIMATION CONTROLLER ---
   useEffect(() => {
-    // Fallback to any animation found if specific names don't exist
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
 
     if (loading) {
@@ -43,24 +48,21 @@ export const Avatar = (props) => {
     }
   }, [message, loading, actions]);
 
-  // --- 4. AUDIO SETUP ---
+  // --- 5. AUDIO SETUP ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioContext.createAnalyser();
-      // Smaller FFT = Faster reaction time (snappier mouth)
       analyser.fftSize = 512; 
-      
       const source = audioContext.createMediaElementSource(audioRef.current);
       source.connect(analyser);
       source.connect(audioContext.destination);
-      
       analyserRef.current = analyser;
       dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
     }
   }, []);
 
-  // --- 5. AUDIO PLAYBACK ---
+  // --- 6. AUDIO PLAYBACK ---
   useEffect(() => {
     if (!message) return;
 
@@ -88,77 +90,73 @@ export const Avatar = (props) => {
 
   }, [message]);
 
-  // --- 6. REALISTIC LIP SYNC LOOP ---
+  // --- 7. SNAPPY LIP SYNC LOOP ---
   useFrame(() => {
-    // Safety Check
     if (!nodes.Wolf3D_Head) return;
 
-    // Find the correct morph target for the HEAD
     const headDict = nodes.Wolf3D_Head.morphTargetDictionary;
     const headIdx = headDict["mouthOpen"] !== undefined ? headDict["mouthOpen"] : headDict["viseme_aa"];
-    
     if (headIdx === undefined) return;
 
-    // Calculate Audio Volume
     const audio = audioRef.current;
     let targetOpen = 0;
 
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
-      // Focus on voice frequencies (skip deep bass)
+      // Calculate average volume (Speech Range)
       for (let i = 10; i < 60; i++) {
           sum += dataArrayRef.current[i];
       }
       let average = sum / 50;
 
-      // --- TUNING FOR REALISM ---
-      // 1. Noise Gate: If it's quiet, force mouth closed (prevents "hanging open")
-      if (average < 10) average = 0; 
+      // --- TUNING FOR SNAPPY LIPS ---
+      // 1. Hard Noise Gate: High threshold (20) forces mouth SHUT when not speaking loudly.
+      // This prevents the "hanging open" look.
+      if (average < 20) average = 0; 
 
-      // 2. Map to 0-1 range
+      // 2. Map & Square:
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      
-      // 3. Square the value: This makes quiet sounds 0.1 and loud sounds 1.0. 
-      // It creates "pop" and prevents the zombie-mouth look.
-      targetOpen = value * value * 1.5;
+      targetOpen = value * value * 1.8; // Higher multiplier for "Pop"
       
       if (targetOpen > 1) targetOpen = 1;
     }
 
-    // Apply to HEAD (Snappy speed 0.8)
+    // Apply to HEAD (0.8 = Snappy)
     const currentHead = nodes.Wolf3D_Head.morphTargetInfluences[headIdx];
     const newHeadValue = THREE.MathUtils.lerp(currentHead, targetOpen, 0.8);
     nodes.Wolf3D_Head.morphTargetInfluences[headIdx] = newHeadValue;
 
-    // --- TEETH FIX ---
-    // We apply the EXACT same value to the teeth so they move WITH the jaw
-    if (nodes.Wolf3D_Teeth) {
-        const teethDict = nodes.Wolf3D_Teeth.morphTargetDictionary;
+    // Apply to TEETH (Dynamic Find)
+    if (teethNode && teethNode.morphTargetDictionary && teethNode.morphTargetInfluences) {
+        const teethDict = teethNode.morphTargetDictionary;
         const teethIdx = teethDict["mouthOpen"] !== undefined ? teethDict["mouthOpen"] : teethDict["viseme_aa"];
         
         if (teethIdx !== undefined) {
-             nodes.Wolf3D_Teeth.morphTargetInfluences[teethIdx] = newHeadValue;
+             teethNode.morphTargetInfluences[teethIdx] = newHeadValue;
         }
     }
   });
 
-  // --- 7. RENDERER (The one that guaranteed visibility) ---
+  // --- 8. ROBUST RENDERER ---
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
       
+      {/* Renders EVERYTHING (Mesh AND SkinnedMesh) */}
       {Object.keys(nodes).map((name) => {
-        if (nodes[name].isSkinnedMesh) {
+        const node = nodes[name];
+        // We render it if it's ANY kind of mesh
+        if (node.isMesh || node.isSkinnedMesh) {
           return (
             <skinnedMesh
               key={name}
-              geometry={nodes[name].geometry}
-              material={nodes[name].material}
-              skeleton={nodes[name].skeleton}
-              morphTargetDictionary={nodes[name].morphTargetDictionary}
-              morphTargetInfluences={nodes[name].morphTargetInfluences}
-              frustumCulled={false}
+              geometry={node.geometry}
+              material={node.material}
+              skeleton={node.skeleton}
+              morphTargetDictionary={node.morphTargetDictionary}
+              morphTargetInfluences={node.morphTargetInfluences}
+              frustumCulled={false} // Prevents flickering/disappearing
             />
           );
         }
