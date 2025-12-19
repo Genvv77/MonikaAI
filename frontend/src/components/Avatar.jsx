@@ -9,7 +9,7 @@ export const Avatar = (props) => {
   const { nodes, materials } = useGLTF("/models/monika_v99.glb");
   const { message, onMessagePlayed, loading } = useChat();
 
-  // --- 2. LOAD ANIMATIONS (The method that worked for you) ---
+  // --- 2. LOAD ANIMATIONS ---
   const { animations } = useGLTF("/models/animations.glb");
   const group = useRef();
   const { actions } = useAnimations(animations, group);
@@ -21,10 +21,9 @@ export const Avatar = (props) => {
 
   // --- 3. ANIMATION CONTROLLER ---
   useEffect(() => {
-    // Basic Fallback
+    // Fallback to any animation found if specific names don't exist
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
 
-    // Priority Logic
     if (loading) {
        // Optional: actionToPlay = actions["Thinking"];
     }
@@ -36,7 +35,6 @@ export const Avatar = (props) => {
        actionToPlay = actions["Talking_1"] || actions["Talking"];
     }
 
-    // Play with fade
     if (actionToPlay) {
       actionToPlay.reset().fadeIn(0.5).play();
       return () => {
@@ -50,7 +48,7 @@ export const Avatar = (props) => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioContext.createAnalyser();
-      // FFT 512 = Good balance of speed and accuracy
+      // Smaller FFT = Faster reaction time (snappier mouth)
       analyser.fftSize = 512; 
       
       const source = audioContext.createMediaElementSource(audioRef.current);
@@ -90,72 +88,66 @@ export const Avatar = (props) => {
 
   }, [message]);
 
-  // --- 6. LIP SYNC LOOP (CRASH PROOF VERSION) ---
+  // --- 6. REALISTIC LIP SYNC LOOP ---
   useFrame(() => {
-    // 1. SAFETY: If head missing, stop.
+    // Safety Check
     if (!nodes.Wolf3D_Head) return;
 
-    // 2. FIND TARGETS: Safely check for standard names
-    const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
-    // Tries "mouthOpen", falls back to "viseme_aa" (RPM standard)
-    const mouthIdx = dictionary["mouthOpen"] !== undefined ? dictionary["mouthOpen"] : dictionary["viseme_aa"];
+    // Find the correct morph target for the HEAD
+    const headDict = nodes.Wolf3D_Head.morphTargetDictionary;
+    const headIdx = headDict["mouthOpen"] !== undefined ? headDict["mouthOpen"] : headDict["viseme_aa"];
     
-    // If no mouth shape found, we can't animate, so return.
-    if (mouthIdx === undefined) return;
+    if (headIdx === undefined) return;
 
-    // 3. CALCULATE VOLUME
+    // Calculate Audio Volume
     const audio = audioRef.current;
     let targetOpen = 0;
 
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
-      let count = 0;
-      
-      // Focus on voice range (10-80)
-      for (let i = 10; i < 80; i++) {
+      // Focus on voice frequencies (skip deep bass)
+      for (let i = 10; i < 60; i++) {
           sum += dataArrayRef.current[i];
-          count++;
       }
-      let average = sum / count;
+      let average = sum / 50;
 
-      // --- TUNING FOR SNAPPY TALKING ---
-      // A. Noise Gate (Ignore breathing/background)
+      // --- TUNING FOR REALISM ---
+      // 1. Noise Gate: If it's quiet, force mouth closed (prevents "hanging open")
       if (average < 10) average = 0; 
 
-      // B. Map to 0-1
+      // 2. Map to 0-1 range
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
       
-      // C. Square it (Makes loud sounds pop, quiet sounds subtle)
+      // 3. Square the value: This makes quiet sounds 0.1 and loud sounds 1.0. 
+      // It creates "pop" and prevents the zombie-mouth look.
       targetOpen = value * value * 1.5;
+      
       if (targetOpen > 1) targetOpen = 1;
     }
 
-    // 4. APPLY TO HEAD
-    // 0.8 Lerp = Fast/Snappy response
-    const currentInfluence = nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx];
-    const newValue = THREE.MathUtils.lerp(currentInfluence, targetOpen, 0.8);
-    nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = newValue;
-    
-    // 5. APPLY TO TEETH (SAFE MODE)
-    // We try to find the teeth. If they don't exist, we skip them. No crash.
+    // Apply to HEAD (Snappy speed 0.8)
+    const currentHead = nodes.Wolf3D_Head.morphTargetInfluences[headIdx];
+    const newHeadValue = THREE.MathUtils.lerp(currentHead, targetOpen, 0.8);
+    nodes.Wolf3D_Head.morphTargetInfluences[headIdx] = newHeadValue;
+
+    // --- TEETH FIX ---
+    // We apply the EXACT same value to the teeth so they move WITH the jaw
     if (nodes.Wolf3D_Teeth) {
         const teethDict = nodes.Wolf3D_Teeth.morphTargetDictionary;
         const teethIdx = teethDict["mouthOpen"] !== undefined ? teethDict["mouthOpen"] : teethDict["viseme_aa"];
-        // Only apply if the teeth actually HAVE the morph target
+        
         if (teethIdx !== undefined) {
-            nodes.Wolf3D_Teeth.morphTargetInfluences[teethIdx] = newValue;
+             nodes.Wolf3D_Teeth.morphTargetInfluences[teethIdx] = newHeadValue;
         }
     }
   });
 
-  // --- 7. RENDERER (Your Proven Working Logic) ---
+  // --- 7. RENDERER (The one that guaranteed visibility) ---
   return (
     <group {...props} dispose={null} ref={group}>
-      {/* Finds the root bone automatically */}
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
       
-      {/* Renders every mesh in the file safely */}
       {Object.keys(nodes).map((name) => {
         if (nodes[name].isSkinnedMesh) {
           return (
@@ -166,7 +158,7 @@ export const Avatar = (props) => {
               skeleton={nodes[name].skeleton}
               morphTargetDictionary={nodes[name].morphTargetDictionary}
               morphTargetInfluences={nodes[name].morphTargetInfluences}
-              frustumCulled={false} // Forces visibility
+              frustumCulled={false}
             />
           );
         }
