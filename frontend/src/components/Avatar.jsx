@@ -1,6 +1,6 @@
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
-import { useGLTF, useFBX, useAnimations } from "@react-three/drei";
+import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
@@ -9,52 +9,39 @@ export const Avatar = (props) => {
   const { nodes, materials } = useGLTF("/models/monika_v99.glb");
   const { message, onMessagePlayed, loading } = useChat();
 
-  // --- 2. LOAD ANIMATIONS ---
-  const { animations: idleAnim } = useFBX("/animations/Standing Idle.fbx");
-  const { animations: angryAnim } = useFBX("/animations/Angry.fbx");
-  const { animations: cryingAnim } = useFBX("/animations/Crying.fbx");
-  const { animations: laughingAnim } = useFBX("/animations/Laughing.fbx");
-  const { animations: rumbaAnim } = useFBX("/animations/Rumba Dancing.fbx");
-  const { animations: terrifiedAnim } = useFBX("/animations/Terrified.fbx");
-  const { animations: talking0Anim } = useFBX("/animations/Talking_0.fbx");
-  const { animations: talking1Anim } = useFBX("/animations/Talking_1.fbx");
-  const { animations: talking2Anim } = useFBX("/animations/Talking_2.fbx");
-
-  idleAnim[0].name = "Standing_Idle";
-  angryAnim[0].name = "Angry";
-  cryingAnim[0].name = "Crying";
-  laughingAnim[0].name = "Laughing";
-  rumbaAnim[0].name = "Rumba_Dancing";
-  terrifiedAnim[0].name = "Terrified";
-  talking0Anim[0].name = "Talking_0";
-  talking1Anim[0].name = "Talking_1";
-  talking2Anim[0].name = "Talking_2";
-
-  const allAnimations = useMemo(() => [
-    idleAnim[0], angryAnim[0], cryingAnim[0], laughingAnim[0], rumbaAnim[0], 
-    terrifiedAnim[0], talking0Anim[0], talking1Anim[0], talking2Anim[0]
-  ], [idleAnim, angryAnim, cryingAnim, laughingAnim, rumbaAnim, terrifiedAnim, talking0Anim, talking1Anim, talking2Anim]);
-
-  // --- 3. ANIMATION SETUP ---
+  // --- 2. LOAD ANIMATIONS (The method that worked for you) ---
+  const { animations } = useGLTF("/models/animations.glb");
   const group = useRef();
-  const { actions } = useAnimations(allAnimations, group);
+  const { actions } = useAnimations(animations, group);
+
+  // Audio Refs
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
+  // --- 3. ANIMATION CONTROLLER ---
   useEffect(() => {
+    // Basic Fallback
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
-    if (loading) { /* Optional: Thinking animation */ }
+
+    // Priority Logic
+    if (loading) {
+       // Optional: actionToPlay = actions["Thinking"];
+    }
     
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
-    } else if (message && message.audio) {
-       actionToPlay = actions["Talking_1"];
+    } 
+    else if (message && message.audio) {
+       actionToPlay = actions["Talking_1"] || actions["Talking"];
     }
 
+    // Play with fade
     if (actionToPlay) {
       actionToPlay.reset().fadeIn(0.5).play();
-      return () => { actionToPlay.fadeOut(0.5); };
+      return () => {
+        actionToPlay.fadeOut(0.5);
+      };
     }
   }, [message, loading, actions]);
 
@@ -63,109 +50,112 @@ export const Avatar = (props) => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512;
+      // FFT 512 = Good balance of speed and accuracy
+      analyser.fftSize = 512; 
+      
       const source = audioContext.createMediaElementSource(audioRef.current);
       source.connect(analyser);
       source.connect(audioContext.destination);
+      
       analyserRef.current = analyser;
       dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
     }
   }, []);
 
+  // --- 5. AUDIO PLAYBACK ---
   useEffect(() => {
     if (!message) return;
+
     if (!message.audio) {
         setTimeout(onMessagePlayed, 3000);
         return;
     }
+
     const audio = audioRef.current;
     if (message.audio.startsWith("data:audio")) {
         audio.src = message.audio;
     } else {
         audio.src = "data:audio/mp3;base64," + message.audio;
     }
+    
     audio.volume = 1.0;
     audio.currentTime = 0;
+
     if (analyserRef.current && analyserRef.current.context.state === 'suspended') {
         analyserRef.current.context.resume();
     }
+
     audio.play().catch(e => { console.error("Audio Error:", e); onMessagePlayed(); });
     audio.onended = onMessagePlayed;
+
   }, [message]);
 
-  // --- 5. ADVANCED LIP SYNC LOOP ---
+  // --- 6. LIP SYNC LOOP (CRASH PROOF VERSION) ---
   useFrame(() => {
+    // 1. SAFETY: If head missing, stop.
     if (!nodes.Wolf3D_Head) return;
 
-    // A. FIND TARGETS: We look for "viseme_aa" (Jaw Open) and "viseme_O" (Lip Pucker)
-    const headDict = nodes.Wolf3D_Head.morphTargetDictionary;
-    const teethDict = nodes.Wolf3D_Teeth ? nodes.Wolf3D_Teeth.morphTargetDictionary : {};
-
-    // Prioritize "viseme_aa" because it opens the mouth properly for speech
-    const openIdx = headDict["viseme_aa"] !== undefined ? headDict["viseme_aa"] : headDict["jawOpen"];
-    const puckerIdx = headDict["viseme_O"] || headDict["mouthPucker"];
+    // 2. FIND TARGETS: Safely check for standard names
+    const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
+    // Tries "mouthOpen", falls back to "viseme_aa" (RPM standard)
+    const mouthIdx = dictionary["mouthOpen"] !== undefined ? dictionary["mouthOpen"] : dictionary["viseme_aa"];
     
-    // Teeth Indices
-    const teethOpenIdx = teethDict["viseme_aa"] !== undefined ? teethDict["viseme_aa"] : teethDict["jawOpen"];
+    // If no mouth shape found, we can't animate, so return.
+    if (mouthIdx === undefined) return;
 
-    if (openIdx === undefined) return;
-
+    // 3. CALCULATE VOLUME
     const audio = audioRef.current;
     let targetOpen = 0;
-    let targetPucker = 0;
 
-    // B. CALCULATE AUDIO ENERGY
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
       let count = 0;
-      // Focus on vocal range
-      for (let i = 10; i < 60; i++) {
+      
+      // Focus on voice range (10-80)
+      for (let i = 10; i < 80; i++) {
           sum += dataArrayRef.current[i];
           count++;
       }
       let average = sum / count;
 
-      // Noise Gate
+      // --- TUNING FOR SNAPPY TALKING ---
+      // A. Noise Gate (Ignore breathing/background)
       if (average < 10) average = 0; 
 
-      // Calculate Open Value (Snappy)
-      let norm = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      targetOpen = norm * norm * 1.2; // Square it for snappiness
+      // B. Map to 0-1
+      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+      
+      // C. Square it (Makes loud sounds pop, quiet sounds subtle)
+      targetOpen = value * value * 1.5;
       if (targetOpen > 1) targetOpen = 1;
-
-      // Calculate Pucker Value (Adds randomness/articulation)
-      // When talking loud, sometimes we "O" our lips
-      targetPucker = (Math.sin(Date.now() / 100) * 0.3 + 0.3) * targetOpen;
     }
 
-    // C. APPLY SMOOTHLY
-    // 1. Jaw/Mouth Open
-    const currentOpen = nodes.Wolf3D_Head.morphTargetInfluences[openIdx];
-    const newOpen = THREE.MathUtils.lerp(currentOpen, targetOpen, 0.7); // 0.7 = fast response
+    // 4. APPLY TO HEAD
+    // 0.8 Lerp = Fast/Snappy response
+    const currentInfluence = nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx];
+    const newValue = THREE.MathUtils.lerp(currentInfluence, targetOpen, 0.8);
+    nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = newValue;
     
-    nodes.Wolf3D_Head.morphTargetInfluences[openIdx] = newOpen;
-    
-    // CRITICAL: Apply to Teeth so they move WITH the jaw
-    if (nodes.Wolf3D_Teeth && teethOpenIdx !== undefined) {
-        nodes.Wolf3D_Teeth.morphTargetInfluences[teethOpenIdx] = newOpen;
-    }
-
-    // 2. Lip Pucker (Variation)
-    if (puckerIdx !== undefined) {
-        const currentPucker = nodes.Wolf3D_Head.morphTargetInfluences[puckerIdx];
-        const newPucker = THREE.MathUtils.lerp(currentPucker, targetPucker, 0.5);
-        nodes.Wolf3D_Head.morphTargetInfluences[puckerIdx] = newPucker;
+    // 5. APPLY TO TEETH (SAFE MODE)
+    // We try to find the teeth. If they don't exist, we skip them. No crash.
+    if (nodes.Wolf3D_Teeth) {
+        const teethDict = nodes.Wolf3D_Teeth.morphTargetDictionary;
+        const teethIdx = teethDict["mouthOpen"] !== undefined ? teethDict["mouthOpen"] : teethDict["viseme_aa"];
+        // Only apply if the teeth actually HAVE the morph target
+        if (teethIdx !== undefined) {
+            nodes.Wolf3D_Teeth.morphTargetInfluences[teethIdx] = newValue;
+        }
     }
   });
 
-  // --- 6. RENDERER ---
+  // --- 7. RENDERER (Your Proven Working Logic) ---
   return (
-    <group ref={group} {...props} dispose={null}>
-      {/* Skeleton */}
+    <group {...props} dispose={null} ref={group}>
+      {/* Finds the root bone automatically */}
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
       
-      {/* Render all Meshes */}
+      {/* Renders every mesh in the file safely */}
       {Object.keys(nodes).map((name) => {
         if (nodes[name].isSkinnedMesh) {
           return (
@@ -176,7 +166,7 @@ export const Avatar = (props) => {
               skeleton={nodes[name].skeleton}
               morphTargetDictionary={nodes[name].morphTargetDictionary}
               morphTargetInfluences={nodes[name].morphTargetInfluences}
-              frustumCulled={false}
+              frustumCulled={false} // Forces visibility
             />
           );
         }
