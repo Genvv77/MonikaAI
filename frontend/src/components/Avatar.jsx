@@ -6,7 +6,7 @@ import { useChat } from "../hooks/useChat";
 
 export const Avatar = (props) => {
   // --- 1. LOAD MODEL ---
-  const { nodes, materials } = useGLTF("/models/monika_v99.glb");
+  const { nodes, scene } = useGLTF("/models/monika_v99.glb");
   const { message, onMessagePlayed, loading } = useChat();
 
   // --- 2. LOAD ANIMATIONS ---
@@ -19,32 +19,40 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
-  // --- 3. DYNAMICALLY FIND TEETH ---
-  // This finds the teeth node regardless of exact name (e.g. Wolf3D_Teeth)
-  const teethNode = useMemo(() => {
-    return Object.values(nodes).find((node) => node.name.includes("Teeth"));
-  }, [nodes]);
+  // --- 3. UNIVERSAL MORPH FINDER (The Fix) ---
+  // Instead of guessing names, we find ALL meshes capable of opening their mouth.
+  const morphTargets = useMemo(() => {
+    const targets = [];
+    scene.traverse((child) => {
+      if (child.isSkinnedMesh && child.morphTargetDictionary) {
+        // Check if this mesh has a "mouthOpen" or "viseme_aa" target
+        const index = child.morphTargetDictionary["mouthOpen"] ?? child.morphTargetDictionary["viseme_aa"];
+        if (index !== undefined) {
+          targets.push({
+            mesh: child,
+            index: index
+          });
+        }
+      }
+    });
+    return targets;
+  }, [scene]);
 
   // --- 4. ANIMATION CONTROLLER ---
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
-
-    if (loading) {
-       // Optional: actionToPlay = actions["Thinking"];
-    }
+    
+    if (loading) { /* Optional: Thinking animation */ }
     
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
-    } 
-    else if (message && message.audio) {
+    } else if (message && message.audio) {
        actionToPlay = actions["Talking_1"] || actions["Talking"];
     }
 
     if (actionToPlay) {
       actionToPlay.reset().fadeIn(0.5).play();
-      return () => {
-        actionToPlay.fadeOut(0.5);
-      };
+      return () => { actionToPlay.fadeOut(0.5); };
     }
   }, [message, loading, actions]);
 
@@ -92,11 +100,8 @@ export const Avatar = (props) => {
 
   // --- 7. SNAPPY LIP SYNC LOOP ---
   useFrame(() => {
-    if (!nodes.Wolf3D_Head) return;
-
-    const headDict = nodes.Wolf3D_Head.morphTargetDictionary;
-    const headIdx = headDict["mouthOpen"] !== undefined ? headDict["mouthOpen"] : headDict["viseme_aa"];
-    if (headIdx === undefined) return;
+    // If no meshes found (bad model), exit
+    if (morphTargets.length === 0) return;
 
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -104,50 +109,42 @@ export const Avatar = (props) => {
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
-      // Calculate average volume (Speech Range)
+      // Calculate Average Volume (Speech Range)
       for (let i = 10; i < 60; i++) {
           sum += dataArrayRef.current[i];
       }
       let average = sum / 50;
 
-      // --- TUNING FOR SNAPPY LIPS ---
-      // 1. Hard Noise Gate: High threshold (20) forces mouth SHUT when not speaking loudly.
-      // This prevents the "hanging open" look.
+      // --- TUNING FOR REALISM ---
+      // 1. High Noise Gate: Forces mouth closed for quiet sounds
       if (average < 20) average = 0; 
 
-      // 2. Map & Square:
+      // 2. Map Linear
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      targetOpen = value * value * 1.8; // Higher multiplier for "Pop"
+      
+      // 3. Square it for "Pop" (Snappy syllables)
+      targetOpen = value * value * 1.5;
       
       if (targetOpen > 1) targetOpen = 1;
     }
 
-    // Apply to HEAD (0.8 = Snappy)
-    const currentHead = nodes.Wolf3D_Head.morphTargetInfluences[headIdx];
-    const newHeadValue = THREE.MathUtils.lerp(currentHead, targetOpen, 0.8);
-    nodes.Wolf3D_Head.morphTargetInfluences[headIdx] = newHeadValue;
-
-    // Apply to TEETH (Dynamic Find)
-    if (teethNode && teethNode.morphTargetDictionary && teethNode.morphTargetInfluences) {
-        const teethDict = teethNode.morphTargetDictionary;
-        const teethIdx = teethDict["mouthOpen"] !== undefined ? teethDict["mouthOpen"] : teethDict["viseme_aa"];
-        
-        if (teethIdx !== undefined) {
-             teethNode.morphTargetInfluences[teethIdx] = newHeadValue;
-        }
-    }
+    // --- APPLY TO ALL MESHES (Head, Teeth, Gums) ---
+    // We loop through everything we found in step 3
+    morphTargets.forEach((target) => {
+        const current = target.mesh.morphTargetInfluences[target.index];
+        // 0.8 is fast speed for snappy talking
+        target.mesh.morphTargetInfluences[target.index] = THREE.MathUtils.lerp(current, targetOpen, 0.8);
+    });
   });
 
-  // --- 8. ROBUST RENDERER ---
+  // --- 8. RENDERER ---
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
       
-      {/* Renders EVERYTHING (Mesh AND SkinnedMesh) */}
       {Object.keys(nodes).map((name) => {
         const node = nodes[name];
-        // We render it if it's ANY kind of mesh
-        if (node.isMesh || node.isSkinnedMesh) {
+        if (node.isSkinnedMesh || node.isMesh) {
           return (
             <skinnedMesh
               key={name}
@@ -156,7 +153,7 @@ export const Avatar = (props) => {
               skeleton={node.skeleton}
               morphTargetDictionary={node.morphTargetDictionary}
               morphTargetInfluences={node.morphTargetInfluences}
-              frustumCulled={false} // Prevents flickering/disappearing
+              frustumCulled={false}
             />
           );
         }
