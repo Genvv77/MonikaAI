@@ -5,32 +5,28 @@ import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
 export const Avatar = (props) => {
-  // --- 1. LOAD MODEL (Your Working Logic) ---
+  // --- 1. LOAD MODEL ---
   const { nodes, materials } = useGLTF("/models/monika_v99.glb");
   const { message, onMessagePlayed, loading } = useChat();
 
-  // --- 2. LOAD ANIMATIONS (Your Working Logic) ---
-  // We use the single .glb file since you said this version worked before.
+  // --- 2. LOAD ANIMATIONS ---
   const { animations } = useGLTF("/models/animations.glb");
   const group = useRef();
   const { actions } = useAnimations(animations, group);
 
-  // Audio Refs for Client-Side Lip Sync
+  // Audio Refs
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
   // --- 3. ANIMATION CONTROLLER ---
   useEffect(() => {
-    // Basic Fallback: Find an idle animation if specific names fail
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
 
-    // Priority Logic
     if (loading) {
        // Optional: actionToPlay = actions["Thinking"];
     }
     
-    // Play requested animation
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
     } 
@@ -38,7 +34,6 @@ export const Avatar = (props) => {
        actionToPlay = actions["Talking_1"] || actions["Talking"];
     }
 
-    // Play with fade
     if (actionToPlay) {
       actionToPlay.reset().fadeIn(0.5).play();
       return () => {
@@ -47,12 +42,13 @@ export const Avatar = (props) => {
     }
   }, [message, loading, actions]);
 
-  // --- 4. AUDIO SETUP (One Time) ---
+  // --- 4. AUDIO SETUP ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
+      // Lower FFT size makes it react faster to quick syllables
+      analyser.fftSize = 512; 
       
       const source = audioContext.createMediaElementSource(audioRef.current);
       source.connect(analyser);
@@ -63,7 +59,7 @@ export const Avatar = (props) => {
     }
   }, []);
 
-  // --- 5. AUDIO PLAYBACK HANDLING ---
+  // --- 5. PLAYBACK HANDLING ---
   useEffect(() => {
     if (!message) return;
 
@@ -91,12 +87,10 @@ export const Avatar = (props) => {
 
   }, [message]);
 
-  // --- 6. LIP SYNC FRAME LOOP (The Missing Piece) ---
+  // --- 6. REALISTIC LIP SYNC LOOP ---
   useFrame(() => {
-    // Safety check
     if (!nodes.Wolf3D_Head) return;
 
-    // Find Morph Target
     const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
     const mouthIdx = dictionary["mouthOpen"] !== undefined ? dictionary["mouthOpen"] : dictionary["viseme_aa"];
     
@@ -105,23 +99,41 @@ export const Avatar = (props) => {
     const audio = audioRef.current;
     let targetOpen = 0;
 
-    // Calculate Volume
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
-      for (let i = 10; i < 50; i++) sum += dataArrayRef.current[i];
-      const average = sum / 40; 
-      targetOpen = THREE.MathUtils.mapLinear(average, 0, 80, 0, 1); 
+      // Focus on the "speech" frequency range (mid-highs)
+      // Indexes 10 to 80 capture human voice fundamental frequencies well
+      let count = 0;
+      for (let i = 10; i < 80; i++) {
+          sum += dataArrayRef.current[i];
+          count++;
+      }
+      let average = sum / count;
+
+      // --- TUNING FOR REALISM ---
+      
+      // 1. Noise Gate: If volume is low, force it to 0 so mouth shuts completely
+      if (average < 15) average = 0; 
+
+      // 2. Normalize (0 to 1)
+      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
+      
+      // 3. Exaggerate Peaks (Squaring makes loud sounds bigger, quiet sounds smaller)
+      targetOpen = value * value * 1.5; // 1.5 multiplier boosts the "pop"
+      
+      // Clamp to max 1.0
+      if (targetOpen > 1.0) targetOpen = 1.0;
     }
 
-    // Apply Smoothly
+    // --- APPLY WITH HIGH SPEED ---
     const currentInfluence = nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx];
-    const newValue = THREE.MathUtils.lerp(currentInfluence, targetOpen, 0.5);
+    
+    // Lerp factor 0.8 is VERY fast (snappy). 0.1 is slow (ghostly).
+    const newValue = THREE.MathUtils.lerp(currentInfluence, targetOpen, 0.8);
 
-    // Apply to Head
     nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = newValue;
     
-    // Apply to Teeth
     if (nodes.Wolf3D_Teeth) {
         const teethDict = nodes.Wolf3D_Teeth.morphTargetDictionary;
         const teethIdx = teethDict["mouthOpen"] !== undefined ? teethDict["mouthOpen"] : teethDict["viseme_aa"];
@@ -131,13 +143,11 @@ export const Avatar = (props) => {
     }
   });
 
-  // --- 7. RENDERER (Your Working Version) ---
+  // --- 7. RENDERER ---
   return (
     <group {...props} dispose={null} ref={group}>
-      {/* Skeleton Root */}
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
       
-      {/* Render all meshes found in the file */}
       {Object.keys(nodes).map((name) => {
         if (nodes[name].isSkinnedMesh) {
           return (
@@ -148,7 +158,7 @@ export const Avatar = (props) => {
               skeleton={nodes[name].skeleton}
               morphTargetDictionary={nodes[name].morphTargetDictionary}
               morphTargetInfluences={nodes[name].morphTargetInfluences}
-              frustumCulled={false} // Force visibility
+              frustumCulled={false}
             />
           );
         }
