@@ -19,12 +19,11 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
-  // --- 3. CLEAN ANIMATIONS (Prevent "Open Mouth" Conflict) ---
+  // --- 3. CLEAN ANIMATIONS ---
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
         clip.tracks = clip.tracks.filter((track) => {
-            // Delete any track that tries to control the face or jaw
             return !track.name.includes("morphTargetInfluences") && 
                    !track.name.includes("Jaw") && 
                    !track.name.includes("Tongue");
@@ -33,11 +32,10 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 4. FIND JAW BONE (Critical for Teeth) ---
+  // --- 4. FIND JAW BONE ---
   const jawBone = useMemo(() => {
     let jaw = null;
     scene.traverse((child) => {
-      // Look for standard bone names
       if (child.isBone && (child.name.includes("Jaw") || child.name.includes("jaw"))) {
         jaw = child;
       }
@@ -94,12 +92,12 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. HYBRID LIP SYNC (Bone + Morph) ---
+  // --- 8. SYNCHRONIZED LIP SYNC ---
   useFrame(() => {
-    // A. CALCULATE AUDIO VOLUME
     const audio = audioRef.current;
     let targetOpen = 0;
 
+    // A. CALCULATE AUDIO VOLUME
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
@@ -115,30 +113,32 @@ export const Avatar = (props) => {
       if (targetOpen > 1) targetOpen = 1;
     } 
     else {
-        targetOpen = 0; // Force closed if no audio
+        targetOpen = 0;
     }
 
-    // B. ANIMATE JAW BONE (Fixes Missing Teeth)
+    // B. ANIMATE JAW BONE (Teeth Movement)
+    // We rotate the bone physically so the teeth drop down.
     if (jawBone) {
-        // We rotate the bone on the X axis (standard for jaws)
-        // 0.2 radians is a healthy "Open" amount.
-        const targetRotation = targetOpen * 0.2; 
-        
-        // Lerp 0.9 = VERY FAST/SNAPPY
+        // 0.25 radians = slightly wider jaw opening to separate teeth from lip
+        const targetRotation = targetOpen * 0.25; 
         jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetRotation, 0.9);
     }
 
-    // C. ANIMATE FACE SKIN (Fixes Lips)
+    // C. ANIMATE SKIN (Overdrive)
     if (nodes.Wolf3D_Head) {
         const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
-        // Prioritize Viseme for better lip shape
         let mouthIdx = dictionary["viseme_aa"];
         if (mouthIdx === undefined) mouthIdx = dictionary["mouthOpen"];
 
         if (mouthIdx !== undefined) {
              const current = nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx];
-             // Sync morph speed with bone speed
-             nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = THREE.MathUtils.lerp(current, targetOpen, 0.9);
+             
+             // --- THE FIX: Multiply by 1.3 to pull skin FURTHER than the bone ---
+             // This ensures the lip doesn't cover the teeth.
+             let overdrive = targetOpen * 1.3;
+             if (overdrive > 1) overdrive = 1;
+
+             nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = THREE.MathUtils.lerp(current, overdrive, 0.9);
         }
     }
   });
