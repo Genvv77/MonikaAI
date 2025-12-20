@@ -4,9 +4,9 @@ import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
-// --- 🔒 LOCKED CALIBRATION VALUES ---
-const TEETH_Y = 0.014;  // Up/Down
-const TEETH_Z = 0.071;  // Forward/Back
+// --- 🔒 YOUR CALIBRATED VALUES ---
+const TEETH_Y = 0.014;  
+const TEETH_Z = 0.071;  
 const TEETH_SCALE = 1.0; 
 
 export const Avatar = (props) => {
@@ -16,57 +16,53 @@ export const Avatar = (props) => {
   const group = useRef();
   const { actions } = useAnimations(animations, group);
   
-  // Audio Refs
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   const currentViseme = useRef({ open: 0 });
 
-  // New "Dentures" Reference
   const denturesRef = useRef(null);
 
-  // --- 1. THE "GEOMETRY TRANSPLANT" (Run Once) ---
+  // --- 1. DENTURE SETUP & BRIGHTENING ---
   useEffect(() => {
-    // A. Find the Head Bone (Dynamic Search)
+    // A. Find Head Bone
     const faceMesh = nodes.Wolf3D_Head;
     let targetBone = null;
-
     if (faceMesh && faceMesh.skeleton && faceMesh.skeleton.bones) {
         targetBone = faceMesh.skeleton.bones.find(b => b.name.toLowerCase().includes("head"));
-        if (!targetBone) {
-            targetBone = faceMesh.skeleton.bones[faceMesh.skeleton.bones.length - 1];
-        }
+        if (!targetBone) targetBone = faceMesh.skeleton.bones[faceMesh.skeleton.bones.length - 1];
     }
-    if (!targetBone) targetBone = scene; // Fallback
+    if (!targetBone) targetBone = scene;
 
     // B. Find Original Teeth
     const originalTeeth = nodes.Wolf3D_Teeth;
     if (!originalTeeth) return;
 
-    // C. Create Final Dentures
+    // C. Create Bright Dentures
     if (!denturesRef.current) {
-        // 1. Clone & Center Geometry
+        // Clone & Center
         const geometry = originalTeeth.geometry.clone();
-        geometry.center(); // Reset origin to (0,0,0)
+        geometry.center();
 
-        // 2. Create Mesh
-        const material = originalTeeth.material.clone();
-        material.side = THREE.DoubleSide;
-        material.depthTest = true;
+        // New Material: BRIGHTER & WHITER
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffffff,       // Pure White
+            roughness: 0.2,        // Glossy (like enamel)
+            metalness: 0.0,
+            emissive: 0x222222,    // Slight self-glow to prevent dark shadows
+            side: THREE.DoubleSide
+        });
         
         const dentures = new THREE.Mesh(geometry, material);
         dentures.name = "Final_Dentures";
         
-        // 3. Apply Calibration (Hardcoded)
+        // Apply Calibration
         dentures.position.set(0, TEETH_Y, TEETH_Z);
         dentures.scale.set(TEETH_SCALE, TEETH_SCALE, TEETH_SCALE);
-        dentures.rotation.set(0, 0, 0);
-
-        // 4. Attach to Head Bone
+        
+        // Attach & Hide Original
         targetBone.add(dentures);
         denturesRef.current = dentures;
-
-        // 5. Hide Original
         originalTeeth.visible = false;
     }
   }, [nodes, scene]);
@@ -107,7 +103,6 @@ export const Avatar = (props) => {
     }
   }, []);
 
-  // --- 4. PLAY AUDIO ---
   useEffect(() => {
     if (!message) return;
     if (!message.audio) { setTimeout(onMessagePlayed, 3000); return; }
@@ -119,7 +114,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 5. LIP SYNC LOOP ---
+  // --- 4. ANIMATION LOOP ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -129,14 +124,13 @@ export const Avatar = (props) => {
       let mid = 0;
       for (let i = 10; i < 50; i++) mid += dataArrayRef.current[i];
       mid /= 40;
-      targetOpen = (mid / 255) * 2.2; 
+      targetOpen = (mid / 255) * 2.5; // High sensitivity
       if (targetOpen > 1) targetOpen = 1;
     } 
 
     currentViseme.current.open = THREE.MathUtils.damp(currentViseme.current.open, targetOpen, 18, delta);
     const val = currentViseme.current.open;
 
-    // Helper for applying morphs
     const setMorph = (obj, name, v) => {
         if (obj?.morphTargetDictionary && obj?.morphTargetInfluences) {
             const idx = obj.morphTargetDictionary[name];
@@ -144,18 +138,27 @@ export const Avatar = (props) => {
         }
     };
 
-    // A. FACE ANIMATION
+    // A. HEAD ANIMATION (Lip Overdrive)
     if (nodes.Wolf3D_Head) {
+        // Base speech
         setMorph(nodes.Wolf3D_Head, "viseme_aa", val);
         setMorph(nodes.Wolf3D_Head, "mouthOpen", val);
-        // Exaggerate lip movement to show your newly placed teeth!
-        setMorph(nodes.Wolf3D_Head, "mouthUpperUp_C", val * 1.0); 
-        setMorph(nodes.Wolf3D_Head, "mouthLowerDown_C", val * 1.0);
+        
+        // 🚀 OVERDRIVE: Force lips to peel back 50% more than normal
+        // This reveals the teeth that are hiding behind the lips
+        setMorph(nodes.Wolf3D_Head, "mouthUpperUp_C", val * 1.5); 
+        setMorph(nodes.Wolf3D_Head, "mouthLowerDown_C", val * 1.5); 
+        
+        // Subtle smile to widen mouth corners
+        setMorph(nodes.Wolf3D_Head, "mouthSmile", val * 0.3);
     }
     
-    // B. TEETH ANIMATION (Sync)
+    // B. TEETH ANIMATION (The "Half-Drop" Fix)
     if (denturesRef.current) {
-        setMorph(denturesRef.current, "mouthOpen", val);
+        // 🧠 TRICK: Only open the teeth 50% as much as the jaw.
+        // This keeps the bottom teeth "floating" higher up, making them visible
+        // above the lower lip!
+        setMorph(denturesRef.current, "mouthOpen", val * 0.4);
     }
   });
 
