@@ -92,10 +92,11 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. BALANCED LIP SYNC (High Skin / Low Bone) ---
-  useFrame(() => {
+  // --- 8. ORGANIC LIP SYNC LOOP ---
+  useFrame((state) => {
     const audio = audioRef.current;
     let targetOpen = 0;
+    let targetPucker = 0;
 
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
@@ -103,42 +104,62 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      // Lower Threshold (Sensitivity Boost)
-      if (average < 10) average = 0; 
+      // 1. Boost Sensitivity (multiply by 2.0 so quieter sounds register)
+      if (average < 5) average = 0; // Very low noise gate
+      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.0;
+      if (value > 1) value = 1;
 
-      // Math
-      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      targetOpen = value * value * 1.5; 
-      if (targetOpen > 1) targetOpen = 1;
+      // 2. Add Jitter (Randomness) so it doesn't look robotic
+      // We use sine waves based on time to oscillate the value slightly
+      const jitter = Math.sin(state.clock.elapsedTime * 10) * 0.1;
+      targetOpen = value + jitter;
+      if (targetOpen < 0) targetOpen = 0;
+
+      // 3. Calculate "Pucker" (O Shape)
+      // When talking, we sometimes pucker lips. We do this when volume is MEDIUM.
+      // If volume is LOUD (Ahhh), pucker goes down.
+      targetPucker = value * 0.5 * (1 - value); 
     } 
     else {
         targetOpen = 0;
+        targetPucker = 0;
     }
 
-    // A. JAW BONE (Micro-Movement only)
-    // We only rotate 0.05 radians. Just enough to separate the teeth.
+    // A. JAW BONE (Teeth Separation)
+    // Rotate 0.1 radians max. Enough to see teeth, but not unhinge jaw.
     if (jawBone) {
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetOpen * 0.05, 0.9);
+        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetOpen * 0.15, 0.2);
     }
 
-    // B. LIP ANIMATION (Primary Movement)
+    // B. LIP ANIMATION (Complex Mixing)
     if (nodes.Wolf3D_Head) {
         const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
         
-        // 1. Vertical Open (The main talking movement)
+        // 1. MAIN OPENING (Viseme AA)
         const openIdx = dictionary["viseme_aa"] || dictionary["mouthOpen"];
         if (openIdx !== undefined) {
              const current = nodes.Wolf3D_Head.morphTargetInfluences[openIdx];
-             nodes.Wolf3D_Head.morphTargetInfluences[openIdx] = THREE.MathUtils.lerp(current, targetOpen, 0.9);
+             // 0.5 lerp = smoother, less jittery
+             nodes.Wolf3D_Head.morphTargetInfluences[openIdx] = THREE.MathUtils.lerp(current, targetOpen, 0.5);
         }
 
-        // 2. Horizontal Shaping (Makes it look like talking, not biting)
-        // We mix in a bit of "Smile" or "Viseme E" to widen the lips slightly when loud
-        const shapeIdx = dictionary["mouthSmile"] || dictionary["viseme_E"];
-        if (shapeIdx !== undefined) {
-             const current = nodes.Wolf3D_Head.morphTargetInfluences[shapeIdx];
-             // 0.3 influence is subtle but effective
-             nodes.Wolf3D_Head.morphTargetInfluences[shapeIdx] = THREE.MathUtils.lerp(current, targetOpen * 0.3, 0.9);
+        // 2. LIP SHAPING (Viseme U / O / Pucker)
+        // This makes the mouth round instead of just wide
+        const puckerIdx = dictionary["viseme_U"] || dictionary["viseme_O"] || dictionary["mouthPucker"];
+        if (puckerIdx !== undefined) {
+             const current = nodes.Wolf3D_Head.morphTargetInfluences[puckerIdx];
+             nodes.Wolf3D_Head.morphTargetInfluences[puckerIdx] = THREE.MathUtils.lerp(current, targetPucker, 0.5);
+        }
+
+        // 3. TEETH FIX (Keep lips above teeth)
+        // We slightly raise the upper lip if volume is high
+        const upperLipIdx = dictionary["mouthUpperUpLeft"]; // Usually works on whole lip for RPM
+        if (upperLipIdx !== undefined) {
+             nodes.Wolf3D_Head.morphTargetInfluences[upperLipIdx] = THREE.MathUtils.lerp(
+                 nodes.Wolf3D_Head.morphTargetInfluences[upperLipIdx], 
+                 targetOpen * 0.3, 
+                 0.5
+             );
         }
     }
   });
