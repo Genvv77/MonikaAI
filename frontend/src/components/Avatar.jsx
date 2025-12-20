@@ -47,7 +47,7 @@ export const Avatar = (props) => {
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
     
-    if (loading) { /* Optional: Thinking */ }
+    if (loading) { /* Optional */ }
     
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
@@ -92,53 +92,53 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. SYNCHRONIZED LIP SYNC ---
+  // --- 8. BALANCED LIP SYNC (High Skin / Low Bone) ---
   useFrame(() => {
     const audio = audioRef.current;
     let targetOpen = 0;
 
-    // A. CALCULATE AUDIO VOLUME
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      // Noise Gate
-      if (average < 20) average = 0; 
+      // Lower Threshold (Sensitivity Boost)
+      if (average < 10) average = 0; 
 
-      // Math for "Pop"
+      // Math
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      targetOpen = value * value * 2.0; 
+      targetOpen = value * value * 1.5; 
       if (targetOpen > 1) targetOpen = 1;
     } 
     else {
         targetOpen = 0;
     }
 
-    // B. ANIMATE JAW BONE (Teeth Movement)
-    // We rotate the bone physically so the teeth drop down.
+    // A. JAW BONE (Micro-Movement only)
+    // We only rotate 0.05 radians. Just enough to separate the teeth.
     if (jawBone) {
-        // 0.25 radians = slightly wider jaw opening to separate teeth from lip
-        const targetRotation = targetOpen * 0.25; 
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetRotation, 0.9);
+        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetOpen * 0.05, 0.9);
     }
 
-    // C. ANIMATE SKIN (Overdrive)
+    // B. LIP ANIMATION (Primary Movement)
     if (nodes.Wolf3D_Head) {
         const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
-        let mouthIdx = dictionary["viseme_aa"];
-        if (mouthIdx === undefined) mouthIdx = dictionary["mouthOpen"];
+        
+        // 1. Vertical Open (The main talking movement)
+        const openIdx = dictionary["viseme_aa"] || dictionary["mouthOpen"];
+        if (openIdx !== undefined) {
+             const current = nodes.Wolf3D_Head.morphTargetInfluences[openIdx];
+             nodes.Wolf3D_Head.morphTargetInfluences[openIdx] = THREE.MathUtils.lerp(current, targetOpen, 0.9);
+        }
 
-        if (mouthIdx !== undefined) {
-             const current = nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx];
-             
-             // --- THE FIX: Multiply by 1.3 to pull skin FURTHER than the bone ---
-             // This ensures the lip doesn't cover the teeth.
-             let overdrive = targetOpen * 1.3;
-             if (overdrive > 1) overdrive = 1;
-
-             nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = THREE.MathUtils.lerp(current, overdrive, 0.9);
+        // 2. Horizontal Shaping (Makes it look like talking, not biting)
+        // We mix in a bit of "Smile" or "Viseme E" to widen the lips slightly when loud
+        const shapeIdx = dictionary["mouthSmile"] || dictionary["viseme_E"];
+        if (shapeIdx !== undefined) {
+             const current = nodes.Wolf3D_Head.morphTargetInfluences[shapeIdx];
+             // 0.3 influence is subtle but effective
+             nodes.Wolf3D_Head.morphTargetInfluences[shapeIdx] = THREE.MathUtils.lerp(current, targetOpen * 0.3, 0.9);
         }
     }
   });
