@@ -34,25 +34,23 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 4. SURGICAL RELOCATION (The Fix) ---
+  // --- 4. X-RAY GRAPHICS HACK (The Fix) ---
   const { headMesh, teethMesh, jawBone } = useMemo(() => {
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
     
-    // A. FORCE TEETH VISIBILITY
-    if (teeth) {
-        // 1. Move them FORWARD (Z) and UP (Y) to poke through the skin
-        teeth.position.z += 0.02; 
-        teeth.position.y += 0.01; 
-
-        // 2. Material Hacks
-        if (teeth.material) {
-            teeth.material.depthWrite = true;
-            teeth.renderOrder = 1; // Force draw on top of skin internals
-        }
+    // CRITICAL: Force Teeth to Draw ON TOP of Skin
+    if (teeth && teeth.material) {
+        // Clone material so we don't mess up other things
+        teeth.material = teeth.material.clone();
+        
+        // This makes the GPU draw teeth even if they are behind the lips
+        teeth.material.depthTest = false; 
+        teeth.material.depthWrite = false;
+        teeth.renderOrder = 10; // High number = Draw Last (On Top)
     }
 
-    // B. Find Jaw Bone
+    // Find Jaw Bone
     let jaw = null;
     scene.traverse((child) => {
         if (child.isBone && child.name.toLowerCase().includes("jaw")) {
@@ -123,8 +121,7 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
       if (average < 5) average = 0; 
-      
-      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 3.0; 
+      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.5; 
       if (value > 1.0) value = 1.0; 
       targetOpen = value;
     } 
@@ -139,25 +136,20 @@ export const Avatar = (props) => {
         }
     };
 
-    // A. HEAD: Open Wide
+    // A. HEAD
     if (headMesh) {
         setMorph(headMesh, "viseme_aa", val);
         setMorph(headMesh, "mouthOpen", val);
-        // Force lips UP/DOWN to reveal the new teeth position
-        setMorph(headMesh, "mouthUpperUp_C", val * 0.8);
-        setMorph(headMesh, "mouthLowerDown_C", val * 0.8);
+        setMorph(headMesh, "mouthUpperUp_C", val); // Lift curtain
     }
 
-    // B. TEETH: Open to Match
+    // B. TEETH (Force Open)
     if (teethMesh) {
         setMorph(teethMesh, "mouthOpen", val);
     }
 
-    // C. JAW BONE: Subtle Rotation
-    // Reduced intensity so it doesn't pull teeth down into the chin skin
-    if (jawBone) {
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.15, 0.2);
-    }
+    // C. JAW BONE (Disable rotation for now to prevent hiding teeth)
+    // jawBone.rotation.x = ... (Commented out to test visibility)
   });
 
   // --- 9. RENDERER ---
