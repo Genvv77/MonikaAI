@@ -19,7 +19,7 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   
-  // Smoothing Refs
+  // Smoothing Ref
   const currentOpen = useRef(0);
 
   // --- 3. CLEAN ANIMATIONS ---
@@ -46,7 +46,19 @@ export const Avatar = (props) => {
     return jaw;
   }, [scene]);
 
-  // --- 5. ANIMATION CONTROLLER ---
+  // --- 5. FIND ALL MORPHABLE MESHES (The Fix) ---
+  // We find EVERY mesh that has morph targets, not just "Wolf3D_Head"
+  const morphMeshes = useMemo(() => {
+    const targets = [];
+    scene.traverse((child) => {
+      if ((child.isMesh || child.isSkinnedMesh) && child.morphTargetDictionary) {
+        targets.push(child);
+      }
+    });
+    return targets;
+  }, [scene]);
+
+  // --- 6. ANIMATION CONTROLLER ---
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
     
@@ -64,7 +76,7 @@ export const Avatar = (props) => {
     }
   }, [message, loading, actions]);
 
-  // --- 6. AUDIO SETUP ---
+  // --- 7. AUDIO SETUP ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -78,7 +90,7 @@ export const Avatar = (props) => {
     }
   }, []);
 
-  // --- 7. AUDIO PLAYBACK ---
+  // --- 8. AUDIO PLAYBACK ---
   useEffect(() => {
     if (!message) return;
     if (!message.audio) { setTimeout(onMessagePlayed, 3000); return; }
@@ -95,7 +107,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. FULL ARTICULATION LOOP ---
+  // --- 9. UNIVERSAL LIP SYNC LOOP ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -108,60 +120,44 @@ export const Avatar = (props) => {
 
       if (average < 5) average = 0; // Noise Gate
 
-      // Boost volume signal to make lips move more
+      // Audio Sensitivity
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.0;
       if (value > 1) value = 1;
       targetOpen = value;
     } 
 
-    // Smooth the movement (Damping)
-    // 0.1 = Very Snappy, 0.2 = Smooth. 0.12 is a good middle ground.
-    currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 25, delta);
+    // Smooth Damping
+    currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 20, delta);
     const val = currentOpen.current;
 
-    // --- APPLY TO MESH (LIPS) ---
-    if (nodes.Wolf3D_Head) {
-        const dict = nodes.Wolf3D_Head.morphTargetDictionary;
-        const influ = nodes.Wolf3D_Head.morphTargetInfluences;
+    // A. ANIMATE ALL MESHES (Lips/Skin)
+    morphMeshes.forEach((mesh) => {
+        const dict = mesh.morphTargetDictionary;
+        const influ = mesh.morphTargetInfluences;
+        if (!dict || !influ) return;
 
-        // 1. MAIN OPENER (Viseme AA / Jaw Open)
+        // 1. OPEN MOUTH (Viseme AA / Jaw Open)
         const openIdx = dict["viseme_aa"] || dict["mouthOpen"] || dict["jawOpen"];
         if (openIdx !== undefined) influ[openIdx] = val;
 
-        // 2. UPPER LIP RAISER (Shows Top Teeth) - CRITICAL
-        // We look for standard ARKit names
-        const upperCenter = dict["mouthUpperUp_C"] || dict["mouthUpperUp"];
-        const upperLeft = dict["mouthUpperUpLeft"] || dict["mouthUpperUp_L"];
-        const upperRight = dict["mouthUpperUpRight"] || dict["mouthUpperUp_R"];
-        
-        // Lift upper lip by 50% of the total volume volume
-        if (upperCenter !== undefined) influ[upperCenter] = val * 0.5;
-        if (upperLeft !== undefined) influ[upperLeft] = val * 0.5;
-        if (upperRight !== undefined) influ[upperRight] = val * 0.5;
-
-        // 3. LOWER LIP DEPRESSOR (Shows Bottom Teeth)
-        const lowerCenter = dict["mouthLowerDown_C"] || dict["mouthLowerDown"];
-        const lowerLeft = dict["mouthLowerDownLeft"] || dict["mouthLowerDown_L"];
-        const lowerRight = dict["mouthLowerDownRight"] || dict["mouthLowerDown_R"];
-
-        if (lowerCenter !== undefined) influ[lowerCenter] = val * 0.5;
-        if (lowerLeft !== undefined) influ[lowerLeft] = val * 0.5;
-        if (lowerRight !== undefined) influ[lowerRight] = val * 0.5;
-
-        // 4. SMILE MIX (Widens lips so they don't look circular)
-        const smileIdx = dict["mouthSmile"] || dict["mouthSmileLeft"];
+        // 2. SMILE (Widen Lips)
+        // Adds realism by pulling corners of mouth
+        const smileIdx = dict["mouthSmile"] || dict["viseme_E"];
         if (smileIdx !== undefined) influ[smileIdx] = val * 0.2;
-    }
+        
+        // 3. UPPER LIP UP (Show Top Teeth)
+        const upperIdx = dict["mouthUpperUp_C"] || dict["mouthUpperUp"];
+        if (upperIdx !== undefined) influ[upperIdx] = val * 0.5;
+    });
 
-    // --- APPLY TO BONE (TEETH) ---
+    // B. ANIMATE JAW BONE (Teeth Separation)
     if (jawBone) {
-        // Rotate jaw downwards physically to separate teeth
-        // 0.2 radians is a solid open mouth.
+        // Rotate physically
         jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.2, 0.3);
     }
   });
 
-  // --- 9. RENDERER ---
+  // --- 10. RENDERER ---
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
