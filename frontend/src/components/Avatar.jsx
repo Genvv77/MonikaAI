@@ -19,18 +19,16 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   
-  // Smoothing
+  // Physics State
   const currentOpen = useRef(0);
 
   // --- 3. GENTLE CLEANER (Fixes Head Tilt) ---
-  // We only remove FACIAL MORPHS. We leave the Head/Neck bones alone
-  // so she stands straight and breathes.
+  // We allow Head/Neck bones to move so she stands straight.
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
         clip.tracks = clip.tracks.filter((track) => {
-            // Only block morphTargetInfluences (Face shapes)
-            // Allow "Head" and "Neck" rotations!
+            // Only remove facial morphs, keep the body posture!
             return !track.name.includes("morphTargetInfluences") && 
                    !track.name.includes("Jaw") && 
                    !track.name.includes("Tongue");
@@ -39,16 +37,10 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 4. IDENTIFY PARTS & DEBUG TEETH ---
+  // --- 4. IDENTIFY PARTS ---
   const { headMesh, teethMesh } = useMemo(() => {
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
-
-    // DEBUG: Print available shapes on the teeth
-    if (teeth && teeth.morphTargetDictionary) {
-        console.log("🦷 TEETH SHAPES:", Object.keys(teeth.morphTargetDictionary));
-    }
-
     return { headMesh: head, teethMesh: teeth };
   }, [nodes]);
 
@@ -101,7 +93,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. SYNC LOOP (Posture & Teeth Fix) ---
+  // --- 8. SYNC LOOP (Targeted Fix) ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -129,18 +121,18 @@ export const Avatar = (props) => {
         });
     };
 
-    // A. HEAD ANIMATION
+    // A. HEAD ANIMATION (Rich)
     if (headMesh) {
+        // Use all available open shapes for the face
         applyMorph(headMesh, ["viseme_aa", "mouthOpen", "jawOpen"], val);
         applyMorph(headMesh, ["mouthSmile", "viseme_E"], val * 0.3);
-        applyMorph(headMesh, ["mouthUpperUp_C", "mouthUpperUp"], val * 0.5); // Shows Upper Teeth
+        applyMorph(headMesh, ["mouthUpperUp_C", "mouthUpperUp"], val * 0.5);
     }
 
-    // B. TEETH ANIMATION (Fixing the "Empty Bottom Jaw")
+    // B. TEETH ANIMATION (Simple)
     if (teethMesh) {
-        // We apply the "Open" morph to the teeth. 
-        // This *should* drop the bottom teeth.
-        applyMorph(teethMesh, ["viseme_aa", "mouthOpen", "jawOpen"], val);
+        // WE ONLY USE "mouthOpen" BECAUSE YOUR DEBUG LOG SAID SO!
+        applyMorph(teethMesh, ["mouthOpen"], val);
     }
   });
 
