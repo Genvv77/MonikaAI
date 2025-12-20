@@ -20,11 +20,11 @@ export const Avatar = (props) => {
   const [teethY, setTeethY] = useState(-0.02); 
   const [teethZ, setTeethZ] = useState(0.01);  
   const [teethScale, setTeethScale] = useState(1.2);
-  const [manualOpen, setManualOpen] = useState(1.0);
+  const [manualOpen, setManualOpen] = useState(0.05);
   const [debugMsg, setDebugMsg] = useState("Initializing...");
 
-  // Ref for our new "Dentures"
-  const denturesRef = useRef(null);
+  // Ref for teeth mesh (original, kept skinned)
+  const teethRef = useRef(null);
 
   // --- 1. SURGICAL PROCEDURE (Run Once) ---
   useEffect(() => {
@@ -58,29 +58,11 @@ export const Avatar = (props) => {
         return;
     }
 
-    // C. Create DENTURES (Clone)
-    // We clone the geometry so it is NOT rigged to the skeleton anymore.
-    if (!denturesRef.current) {
-        const dentures = new THREE.Mesh(
-            oldTeeth.geometry.clone(), 
-            oldTeeth.material.clone()
-        );
-        
-        // Setup Material
-        dentures.material.transparent = false;
-        dentures.material.side = THREE.FrontSide;
-        dentures.material.depthTest = true;
-        
-        // Important: Rotate 180 if needed (RPM models sometimes face backwards)
-        // dentures.rotation.y = Math.PI; 
-
-        // Attach to Head Bone
-        headBone.add(dentures);
-        denturesRef.current = dentures;
-
-        // Hide original
-        oldTeeth.visible = false;
-    }
+    // C. Keep the original teeth (skinned) and make sure they render
+    teethRef.current = oldTeeth;
+    oldTeeth.frustumCulled = false;
+    oldTeeth.material.transparent = false;
+    oldTeeth.material.side = THREE.DoubleSide;
 
   }, [nodes, scene]);
 
@@ -136,26 +118,27 @@ export const Avatar = (props) => {
   // --- 4. FRAME LOOP (Controls Dentures) ---
   useFrame((state, delta) => {
     // A. MOVE DENTURES (Sliders)
-    if (denturesRef.current) {
-        // These coords are now LOCAL to the Head Bone.
-        // Y = Up/Down relative to head
-        // Z = Forward/Back relative to head
-        denturesRef.current.position.set(0, teethY, teethZ);
-        denturesRef.current.scale.set(teethScale, teethScale, teethScale);
+    if (teethRef.current) {
+        // Adjust teeth in local space of the head to avoid clipping
+        teethRef.current.position.set(0, teethY, teethZ);
+        teethRef.current.scale.set(teethScale, teethScale, teethScale);
     }
 
     // B. LIP SYNC
     const audio = audioRef.current;
-    let targetOpen = manualOpen;
+    let audioOpen = 0;
 
-    if (manualOpen === 0 && !audio.paused && !audio.ended && analyserRef.current) {
+    if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let mid = 0;
       for (let i = 10; i < 50; i++) mid += dataArrayRef.current[i];
       mid /= 40;
-      targetOpen = (mid / 255) * 2.0; 
-      if (targetOpen > 1) targetOpen = 1;
-    } 
+      audioOpen = (mid / 255) * 1.4; 
+      if (audioOpen > 1) audioOpen = 1;
+    }
+
+    // Manual slider is now an offset, audio drives the rest
+    let targetOpen = Math.min(1, manualOpen + audioOpen);
 
     currentViseme.current.open = THREE.MathUtils.damp(currentViseme.current.open, targetOpen, 18, delta);
     const val = currentViseme.current.open;
@@ -169,15 +152,14 @@ export const Avatar = (props) => {
     };
 
     if (nodes.Wolf3D_Head) {
-        setMorph(nodes.Wolf3D_Head, "viseme_aa", val);
         setMorph(nodes.Wolf3D_Head, "mouthOpen", val);
-        setMorph(nodes.Wolf3D_Head, "mouthUpperUp_C", val);
-        setMorph(nodes.Wolf3D_Head, "mouthLowerDown_C", val);
+        setMorph(nodes.Wolf3D_Head, "mouthSmile", val * 0.25);
     }
 
     // Apply speech morph to our new dentures too!
-    if (denturesRef.current) {
-        setMorph(denturesRef.current, "mouthOpen", val);
+    if (teethRef.current) {
+        setMorph(teethRef.current, "mouthOpen", val);
+        setMorph(teethRef.current, "mouthSmile", val * 0.25);
     }
   });
 
@@ -186,8 +168,10 @@ export const Avatar = (props) => {
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
       {Object.keys(nodes).map((name) => {
         const node = nodes[name];
-        // Hide original teeth
-        if (name === "Wolf3D_Teeth") return null;
+        // Use the skinned teeth we already keep in the scene graph
+        if (name === "Wolf3D_Teeth") {
+          return null;
+        }
         
         if (node.isSkinnedMesh || node.isMesh) {
           return (
