@@ -22,32 +22,37 @@ export const Avatar = (props) => {
   // Physics State
   const currentOpen = useRef(0);
 
-  // --- 3. ANIMATION CLEANER (Posture Fix) ---
+  // --- 3. ANIMATION CLEANER ---
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
         clip.tracks = clip.tracks.filter((track) => {
-            // Remove face morphs & Jaw rotation tracks
-            return !track.name.toLowerCase().includes("morph") && 
-                   !track.name.toLowerCase().includes("jaw");
+            const name = track.name.toLowerCase();
+            return !name.includes("morph") && !name.includes("jaw");
         });
       });
     }
   }, [animations]);
 
-  // --- 4. IDENTIFY PARTS & FORCE TEETH VISIBILITY ---
+  // --- 4. SURGICAL RELOCATION (The Fix) ---
   const { headMesh, teethMesh, jawBone } = useMemo(() => {
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
     
-    // FORCE TEETH MATERIAL FIX
-    if (teeth && teeth.material) {
-        teeth.material.side = THREE.DoubleSide; // Render both sides
-        teeth.material.transparent = false;     // Make sure they are solid
-        teeth.frustumCulled = false;            // Never hide them
+    // A. FORCE TEETH VISIBILITY
+    if (teeth) {
+        // 1. Move them FORWARD (Z) and UP (Y) to poke through the skin
+        teeth.position.z += 0.02; 
+        teeth.position.y += 0.01; 
+
+        // 2. Material Hacks
+        if (teeth.material) {
+            teeth.material.depthWrite = true;
+            teeth.renderOrder = 1; // Force draw on top of skin internals
+        }
     }
 
-    // Find Jaw Bone
+    // B. Find Jaw Bone
     let jaw = null;
     scene.traverse((child) => {
         if (child.isBone && child.name.toLowerCase().includes("jaw")) {
@@ -107,7 +112,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. THE "NUCLEAR" SYNC LOOP ---
+  // --- 8. SYNC LOOP ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -119,9 +124,8 @@ export const Avatar = (props) => {
       let average = sum / 50;
       if (average < 5) average = 0; 
       
-      // EXTREME SENSITIVITY
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 3.0; 
-      if (value > 1.0) value = 1.0; // Cap at 1.0 (Full Open)
+      if (value > 1.0) value = 1.0; 
       targetOpen = value;
     } 
 
@@ -129,43 +133,30 @@ export const Avatar = (props) => {
     const val = currentOpen.current;
 
     const setMorph = (mesh, name, value) => {
-        if (!mesh || !mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
-        const idx = mesh.morphTargetDictionary[name];
-        if (idx !== undefined) mesh.morphTargetInfluences[idx] = value;
+        if (mesh && mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
+            const idx = mesh.morphTargetDictionary[name];
+            if (idx !== undefined) mesh.morphTargetInfluences[idx] = value;
+        }
     };
 
-    // A. HEAD: FIRE EVERYTHING
+    // A. HEAD: Open Wide
     if (headMesh) {
-        // 1. Jaw/Mouth Open
         setMorph(headMesh, "viseme_aa", val);
         setMorph(headMesh, "mouthOpen", val);
-        setMorph(headMesh, "jawOpen", val); // Just in case
-        
-        // 2. Lift Lips (The "Curtain")
-        // We force the skin to pull back aggressively
-        setMorph(headMesh, "mouthUpperUp_C", val);
-        setMorph(headMesh, "mouthUpperUp", val);
-        setMorph(headMesh, "mouthLowerDown_C", val);
-        setMorph(headMesh, "mouthLowerDown", val);
-        
-        // 3. Widen (Smile)
-        setMorph(headMesh, "mouthSmile", val * 0.3);
+        // Force lips UP/DOWN to reveal the new teeth position
+        setMorph(headMesh, "mouthUpperUp_C", val * 0.8);
+        setMorph(headMesh, "mouthLowerDown_C", val * 0.8);
     }
 
-    // B. TEETH: SYNC & OFFSET
+    // B. TEETH: Open to Match
     if (teethMesh) {
-        // Force Teeth Open
         setMorph(teethMesh, "mouthOpen", val);
-        setMorph(teethMesh, "viseme_aa", val);
-
-        // HACK: Move teeth slightly forward when talking to prevent clipping
-        // teethMesh.position.z = val * 0.002; 
     }
 
-    // C. JAW BONE: PHYSICAL ROTATION
+    // C. JAW BONE: Subtle Rotation
+    // Reduced intensity so it doesn't pull teeth down into the chin skin
     if (jawBone) {
-        // Rotate down X axis. 0.3 radians is VERY wide.
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.3, 0.2);
+        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.15, 0.2);
     }
   });
 
@@ -184,7 +175,7 @@ export const Avatar = (props) => {
               skeleton={node.skeleton}
               morphTargetDictionary={node.morphTargetDictionary}
               morphTargetInfluences={node.morphTargetInfluences}
-              frustumCulled={false} // CRITICAL
+              frustumCulled={false}
             />
           );
         }
