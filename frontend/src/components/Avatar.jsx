@@ -190,4 +190,4 @@ export const Avatar = (props) => {
 };
 
 useGLTF.preload("/models/monika_v99.glb");
-useGLTF.preload("/models/animations.glb");
+useGLTF.preload("/models/animations.glb"); 
