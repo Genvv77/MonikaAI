@@ -4,6 +4,12 @@ import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
+// --- TUNING KNOBS ---
+// Adjust these if they poke through the lips (decrease) or are still hidden (increase)
+const TEETH_Z_OFFSET = 0.012; // Pulls teeth forward (1.2cm)
+const TEETH_Y_OFFSET = -0.002; // Lowers teeth slightly (2mm)
+const TEETH_SCALE = 1.1;      // Makes teeth 10% larger
+
 export const Avatar = (props) => {
   // --- 1. LOAD MODEL ---
   const { nodes, scene } = useGLTF("/models/monika_v99.glb");
@@ -19,7 +25,6 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   
-  // Physics State
   const currentOpen = useRef(0);
 
   // --- 3. CLEAN ANIMATIONS ---
@@ -34,25 +39,33 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 4. NATURAL SETUP (No X-Ray) ---
+  // --- 4. PHYSICAL RELOCATION (The Fix) ---
   const { headMesh, teethMesh, jawBone } = useMemo(() => {
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
     
-    // 1. Reset Material to Normal (Fixes "Horrible Sticker" look)
-    if (teeth && teeth.material) {
-        teeth.material.transparent = false;
-        teeth.material.side = THREE.FrontSide; // Normal rendering
-        teeth.renderOrder = 0; // Standard depth
-    }
-
-    // 2. Subtle Forward Nudge (Prevent clipping, but keep inside)
     if (teeth) {
-        // Move forward just 2mm so they don't clip into the back of the lip
-        teeth.position.z += 0.002; 
+        // A. Reset Material (Standard Opaque)
+        if (teeth.material) {
+            teeth.material = teeth.material.clone();
+            teeth.material.transparent = false;
+            teeth.material.side = THREE.FrontSide;
+            teeth.material.depthTest = true; // Respect physics (no x-ray)
+        }
+
+        // B. Apply Scale
+        teeth.scale.set(TEETH_SCALE, TEETH_SCALE, TEETH_SCALE);
+
+        // C. Apply Permanent Offset (Move them forward!)
+        // We accumulate this, so we check if we've already done it to avoid "flying teeth" on re-renders
+        if (!teeth.userData.offsetApplied) {
+            teeth.position.z += TEETH_Z_OFFSET;
+            teeth.position.y += TEETH_Y_OFFSET;
+            teeth.userData.offsetApplied = true;
+        }
     }
 
-    // 3. Find Jaw Bone
+    // Find Jaw
     let jaw = null;
     scene.traverse((child) => {
         if (child.isBone && child.name.toLowerCase().includes("jaw")) {
@@ -112,7 +125,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. SYNC LOOP (The Natural Revealer) ---
+  // --- 8. SYNC LOOP ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -124,7 +137,6 @@ export const Avatar = (props) => {
       let average = sum / 50;
       if (average < 5) average = 0; 
       
-      // High Sensitivity
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.5; 
       if (value > 1.0) value = 1.0; 
       targetOpen = value;
@@ -133,39 +145,31 @@ export const Avatar = (props) => {
     currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 15, delta);
     const val = currentOpen.current;
 
-    const setMorph = (mesh, name, value) => {
+    const setMorph = (mesh, name, val) => {
         if (mesh && mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
             const idx = mesh.morphTargetDictionary[name];
-            if (idx !== undefined) mesh.morphTargetInfluences[idx] = value;
+            if (idx !== undefined) mesh.morphTargetInfluences[idx] = val;
         }
     };
 
-    // A. HEAD: Open the "Curtain"
+    // A. HEAD: Open Wide
     if (headMesh) {
-        // 1. Open Mouth
         setMorph(headMesh, "viseme_aa", val);
         setMorph(headMesh, "mouthOpen", val);
         
-        // 2. CRITICAL: Pull Lips Apart vertically to reveal teeth
-        // We overdrive these to make sure they clear the teeth mesh
-        setMorph(headMesh, "mouthUpperUp_C", val * 1.0); // Fully lift center
-        setMorph(headMesh, "mouthUpperUp", val * 0.8);
-        setMorph(headMesh, "mouthLowerDown_C", val * 1.0); // Fully drop center
-        setMorph(headMesh, "mouthLowerDown", val * 0.8);
-        
-        // 3. Widen slightly so corners don't pinch
+        // Lift lips vertically to clear the teeth we just moved forward
+        setMorph(headMesh, "mouthUpperUp_C", val * 0.9);
+        setMorph(headMesh, "mouthLowerDown_C", val * 0.9);
         setMorph(headMesh, "mouthSmile", val * 0.2);
     }
 
-    // B. TEETH: Just Open
+    // B. TEETH: Force Open
     if (teethMesh) {
         setMorph(teethMesh, "mouthOpen", val);
     }
 
-    // C. JAW BONE: Physical Drop
-    // This pulls the chin down, which helps pull the lower lip away from the teeth
+    // C. JAW: Physical Drop
     if (jawBone) {
-        // 0.2 rads = ~11 degrees down
         jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.2, 0.2);
     }
   });
