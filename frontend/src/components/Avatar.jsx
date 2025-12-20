@@ -5,10 +5,10 @@ import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
 
 // --- TUNING KNOBS ---
-// Adjust these if they poke through the lips (decrease) or are still hidden (increase)
-const TEETH_Z_OFFSET = 0.012; // Pulls teeth forward (1.2cm)
-const TEETH_Y_OFFSET = -0.002; // Lowers teeth slightly (2mm)
-const TEETH_SCALE = 1.1;      // Makes teeth 10% larger
+// We are DROPPING the teeth (-Y) to center them in the mouth
+const TEETH_Z_OFFSET = 0.009; // Forward (9mm)
+const TEETH_Y_OFFSET = -0.015; // DOWN (1.5cm) - Crucial for lower teeth visibility
+const TEETH_SCALE = 1.05;      // Slight scale up
 
 export const Avatar = (props) => {
   // --- 1. LOAD MODEL ---
@@ -39,28 +39,26 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 4. PHYSICAL RELOCATION (The Fix) ---
+  // --- 4. PHYSICAL RELOCATION (Vertical Drop) ---
   const { headMesh, teethMesh, jawBone } = useMemo(() => {
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
     
     if (teeth) {
-        // A. Reset Material (Standard Opaque)
+        // A. Reset Material
         if (teeth.material) {
             teeth.material = teeth.material.clone();
             teeth.material.transparent = false;
             teeth.material.side = THREE.FrontSide;
-            teeth.material.depthTest = true; // Respect physics (no x-ray)
         }
 
         // B. Apply Scale
         teeth.scale.set(TEETH_SCALE, TEETH_SCALE, TEETH_SCALE);
 
-        // C. Apply Permanent Offset (Move them forward!)
-        // We accumulate this, so we check if we've already done it to avoid "flying teeth" on re-renders
+        // C. Apply Permanent Offset
         if (!teeth.userData.offsetApplied) {
             teeth.position.z += TEETH_Z_OFFSET;
-            teeth.position.y += TEETH_Y_OFFSET;
+            teeth.position.y += TEETH_Y_OFFSET; // Drops teeth down
             teeth.userData.offsetApplied = true;
         }
     }
@@ -136,7 +134,6 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
       if (average < 5) average = 0; 
-      
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.5; 
       if (value > 1.0) value = 1.0; 
       targetOpen = value;
@@ -152,14 +149,20 @@ export const Avatar = (props) => {
         }
     };
 
-    // A. HEAD: Open Wide
+    // A. HEAD: Open & Reveal
     if (headMesh) {
         setMorph(headMesh, "viseme_aa", val);
         setMorph(headMesh, "mouthOpen", val);
         
-        // Lift lips vertically to clear the teeth we just moved forward
-        setMorph(headMesh, "mouthUpperUp_C", val * 0.9);
-        setMorph(headMesh, "mouthLowerDown_C", val * 0.9);
+        // AGGRESSIVE LIP PULL
+        // We pull the lower lip DOWN hard to find those missing bottom teeth
+        setMorph(headMesh, "mouthLowerDown_C", val * 1.5); 
+        setMorph(headMesh, "mouthLowerDown", val * 1.2);
+        
+        // Pull upper lip UP
+        setMorph(headMesh, "mouthUpperUp_C", val * 1.2);
+        setMorph(headMesh, "mouthUpperUp", val * 1.0);
+        
         setMorph(headMesh, "mouthSmile", val * 0.2);
     }
 
@@ -168,10 +171,11 @@ export const Avatar = (props) => {
         setMorph(teethMesh, "mouthOpen", val);
     }
 
-    // C. JAW: Physical Drop
-    if (jawBone) {
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.2, 0.2);
-    }
+    // C. JAW BONE: FROZEN
+    // We intentionally DO NOT rotate the jaw bone.
+    // If we rotate it, it might drag the teeth down into the chin skin again.
+    // By keeping it frozen, the teeth stay "up" while the lips pull "down".
+    // if (jawBone) jawBone.rotation.x = ... (DISABLED)
   });
 
   // --- 9. RENDERER ---
