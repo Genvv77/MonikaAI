@@ -19,30 +19,36 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   
-  // Physics State (for smoothness)
+  // Smoothing
   const currentOpen = useRef(0);
 
-  // --- 3. AGGRESSIVE CLEANER ---
-  // We strip ALL face data from the idle/dancing animations so they don't lock the face.
+  // --- 3. GENTLE CLEANER (Fixes Head Tilt) ---
+  // We only remove FACIAL MORPHS. We leave the Head/Neck bones alone
+  // so she stands straight and breathes.
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
         clip.tracks = clip.tracks.filter((track) => {
-            const name = track.name.toLowerCase();
-            return !name.includes("morph") && 
-                   !name.includes("jaw") && 
-                   !name.includes("tongue") &&
-                   !name.includes("head");
+            // Only block morphTargetInfluences (Face shapes)
+            // Allow "Head" and "Neck" rotations!
+            return !track.name.includes("morphTargetInfluences") && 
+                   !track.name.includes("Jaw") && 
+                   !track.name.includes("Tongue");
         });
       });
     }
   }, [animations]);
 
-  // --- 4. IDENTITY CONFIRMED FINDER ---
+  // --- 4. IDENTIFY PARTS & DEBUG TEETH ---
   const { headMesh, teethMesh } = useMemo(() => {
-    // We hardcode the names since your debug logs confirmed them!
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
+
+    // DEBUG: Print available shapes on the teeth
+    if (teeth && teeth.morphTargetDictionary) {
+        console.log("🦷 TEETH SHAPES:", Object.keys(teeth.morphTargetDictionary));
+    }
+
     return { headMesh: head, teethMesh: teeth };
   }, [nodes]);
 
@@ -95,7 +101,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. OVERDRIVE SYNC LOOP ---
+  // --- 8. SYNC LOOP (Posture & Teeth Fix) ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -106,45 +112,34 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      if (average < 5) average = 0; // Noise Gate
-
-      // Volume Boost (2.5x) ensures even quiet audio opens the mouth
+      if (average < 5) average = 0; 
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.5;
       if (value > 1) value = 1;
       targetOpen = value;
     } 
 
-    // Smooth movement
     currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 15, delta);
     const val = currentOpen.current;
 
-    // --- HELPER: Apply value to multiple targets safely ---
     const applyMorph = (mesh, targetNames, value) => {
         if (!mesh || !mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
-        
         targetNames.forEach((name) => {
             const idx = mesh.morphTargetDictionary[name];
-            if (idx !== undefined) {
-                mesh.morphTargetInfluences[idx] = value;
-            }
+            if (idx !== undefined) mesh.morphTargetInfluences[idx] = value;
         });
     };
 
-    // A. DRIVE HEAD (Skin)
+    // A. HEAD ANIMATION
     if (headMesh) {
-        // 1. OPEN: We trigger ALL open shapes to guarantee movement
         applyMorph(headMesh, ["viseme_aa", "mouthOpen", "jawOpen"], val);
-
-        // 2. WIDEN: Smile prevents "Pac-Man" mouth
         applyMorph(headMesh, ["mouthSmile", "viseme_E"], val * 0.3);
-
-        // 3. LIFT LIP: Shows Upper Teeth (Critical for realism)
-        applyMorph(headMesh, ["mouthUpperUp_C", "mouthUpperUp"], val * 0.6);
+        applyMorph(headMesh, ["mouthUpperUp_C", "mouthUpperUp"], val * 0.5); // Shows Upper Teeth
     }
 
-    // B. DRIVE TEETH (Sync)
+    // B. TEETH ANIMATION (Fixing the "Empty Bottom Jaw")
     if (teethMesh) {
-        // Apply the exact same "Open" force to the teeth mesh
+        // We apply the "Open" morph to the teeth. 
+        // This *should* drop the bottom teeth.
         applyMorph(teethMesh, ["viseme_aa", "mouthOpen", "jawOpen"], val);
     }
   });
