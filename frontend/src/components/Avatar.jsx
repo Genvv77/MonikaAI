@@ -14,59 +14,88 @@ export const Avatar = (props) => {
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
-  const currentViseme = useRef({ open: 0, smile: 0 });
+  const currentViseme = useRef({ open: 0 });
 
   // --- CALIBRATION STATE ---
-  // Start with these values. Now that teeth are un-rigged, they WILL move.
-  const [teethY, setTeethY] = useState(-0.02); // Up/Down
-  const [teethZ, setTeethZ] = useState(0.01);  // Forward/Back
+  const [teethY, setTeethY] = useState(-0.02); 
+  const [teethZ, setTeethZ] = useState(0.01);  
   const [teethScale, setTeethScale] = useState(1.2);
-  const [manualOpen, setManualOpen] = useState(1.0); // Start OPEN so you can see
+  const [manualOpen, setManualOpen] = useState(1.0);
+  const [debugMsg, setDebugMsg] = useState("Initializing...");
 
-  // --- 1. DENTAL EXTRACTION (The Critical Fix) ---
-  const { headMesh, teethMesh, headBone } = useMemo(() => {
-    const head = nodes.Wolf3D_Head;
-    let teeth = nodes.Wolf3D_Teeth;
-    let hBone = null;
+  // Ref for our new "Dentures"
+  const denturesRef = useRef(null);
 
-    // A. FIND HEAD BONE (To attach dentures to)
+  // --- 1. SURGICAL PROCEDURE (Run Once) ---
+  useEffect(() => {
+    // A. Find the HEAD Bone (Strict Search)
+    let headBone = null;
     scene.traverse((child) => {
-        if (child.isBone && (child.name === "Head" || child.name.includes("Head"))) {
-            hBone = child;
+        // Look for exact "Head" name to avoid grabbing the Hips/Root
+        if (child.isBone && child.name === "Head") {
+            headBone = child;
         }
     });
 
-    // B. CONVERT TEETH TO "DENTURES" (Un-Rigging)
-    if (teeth && hBone) {
-        // 1. Create a CLONE that is a simple Mesh, NOT a SkinnedMesh
-        // This removes the skeleton's control so we can move it manually.
-        const dentures = new THREE.Mesh(teeth.geometry.clone(), teeth.material.clone());
-        dentures.name = "Dentures";
-        
-        // 2. Enable Morphs on the new dentures so they still open/close
-        dentures.morphTargetDictionary = teeth.morphTargetDictionary;
-        dentures.morphTargetInfluences = teeth.morphTargetInfluences;
-
-        // 3. Attach Dentures to the Head Bone
-        hBone.add(dentures);
-        
-        // 4. Hide original rigged teeth
-        teeth.visible = false;
-        
-        // 5. Use the new dentures for our logic
-        teeth = dentures;
-        
-        // Fix Material
-        teeth.material.transparent = false;
-        teeth.material.side = THREE.FrontSide;
-        teeth.material.depthTest = true;
+    // Backup: If "Head" not found, look for anything containing "Head"
+    if (!headBone) {
+        scene.traverse((child) => {
+             if (child.isBone && child.name.includes("Head")) headBone = child;
+        });
     }
 
-    return { headMesh: head, teethMesh: teeth, headBone: hBone };
+    if (!headBone) {
+        setDebugMsg("❌ ERROR: Could not find Head Bone!");
+        return;
+    }
+
+    setDebugMsg(`✅ Attached to: ${headBone.name}`);
+
+    // B. Find Original Teeth
+    const oldTeeth = nodes.Wolf3D_Teeth;
+    if (!oldTeeth) {
+        setDebugMsg("❌ ERROR: Could not find Wolf3D_Teeth!");
+        return;
+    }
+
+    // C. Create DENTURES (Clone)
+    // We clone the geometry so it is NOT rigged to the skeleton anymore.
+    if (!denturesRef.current) {
+        const dentures = new THREE.Mesh(
+            oldTeeth.geometry.clone(), 
+            oldTeeth.material.clone()
+        );
+        
+        // Setup Material
+        dentures.material.transparent = false;
+        dentures.material.side = THREE.FrontSide;
+        dentures.material.depthTest = true;
+        
+        // Important: Rotate 180 if needed (RPM models sometimes face backwards)
+        // dentures.rotation.y = Math.PI; 
+
+        // Attach to Head Bone
+        headBone.add(dentures);
+        denturesRef.current = dentures;
+
+        // Hide original
+        oldTeeth.visible = false;
+    }
+
   }, [nodes, scene]);
 
   // --- 2. ANIMATION PLAYBACK ---
   useEffect(() => {
+    if (animations) {
+        // Clean facial animations
+        animations.forEach((clip) => {
+            clip.tracks = clip.tracks.filter((track) => {
+                const name = track.name.toLowerCase();
+                return !name.includes("morph") && !name.includes("jaw");
+            });
+        });
+    }
+    
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
@@ -77,9 +106,9 @@ export const Avatar = (props) => {
       actionToPlay.reset().fadeIn(0.5).play();
       return () => { actionToPlay.fadeOut(0.5); };
     }
-  }, [message, loading, actions]);
+  }, [message, loading, actions, animations]);
 
-  // --- 3. AUDIO SETUP ---
+  // --- 3. AUDIO ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -93,7 +122,6 @@ export const Avatar = (props) => {
     }
   }, []);
 
-  // --- 4. AUDIO TRIGGER ---
   useEffect(() => {
     if (!message) return;
     if (!message.audio) { setTimeout(onMessagePlayed, 3000); return; }
@@ -105,65 +133,62 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 5. RENDER LOOP ---
+  // --- 4. FRAME LOOP (Controls Dentures) ---
   useFrame((state, delta) => {
-    // A. APPLY SLIDERS TO DENTURES (Now this will work!)
-    if (teethMesh) {
-        teethMesh.position.set(0, teethY, teethZ); // Local position inside Head Bone
-        teethMesh.scale.set(teethScale, teethScale, teethScale);
-        
-        // Rotation fix: Ensure teeth face forward (Head bone usually rotates them)
-        // You might not need this, but if teeth face UP, uncomment:
-        // teethMesh.rotation.set( -Math.PI / 2, 0, 0 ); 
+    // A. MOVE DENTURES (Sliders)
+    if (denturesRef.current) {
+        // These coords are now LOCAL to the Head Bone.
+        // Y = Up/Down relative to head
+        // Z = Forward/Back relative to head
+        denturesRef.current.position.set(0, teethY, teethZ);
+        denturesRef.current.scale.set(teethScale, teethScale, teethScale);
     }
 
-    // B. CALCULATE OPENING
+    // B. LIP SYNC
     const audio = audioRef.current;
-    let targetOpen = manualOpen; // Default to slider
+    let targetOpen = manualOpen;
 
     if (manualOpen === 0 && !audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let mid = 0;
       for (let i = 10; i < 50; i++) mid += dataArrayRef.current[i];
       mid /= 40;
-      targetOpen = (mid / 255) * 2.5; 
+      targetOpen = (mid / 255) * 2.0; 
       if (targetOpen > 1) targetOpen = 1;
     } 
 
     currentViseme.current.open = THREE.MathUtils.damp(currentViseme.current.open, targetOpen, 18, delta);
     const val = currentViseme.current.open;
 
-    const setMorph = (mesh, name, v) => {
-        if (mesh?.morphTargetDictionary && mesh?.morphTargetInfluences) {
-            const idx = mesh.morphTargetDictionary[name];
-            if (idx !== undefined) mesh.morphTargetInfluences[idx] = v;
+    // C. MORPH TARGETS (Face + Dentures)
+    const setMorph = (obj, name, v) => {
+        if (obj?.morphTargetDictionary && obj?.morphTargetInfluences) {
+            const idx = obj.morphTargetDictionary[name];
+            if (idx !== undefined) obj.morphTargetInfluences[idx] = v;
         }
     };
 
-    // C. ANIMATE FACE
-    if (headMesh) {
-        setMorph(headMesh, "viseme_aa", val);
-        setMorph(headMesh, "mouthOpen", val);
-        setMorph(headMesh, "mouthUpperUp_C", val * 1.0);
-        setMorph(headMesh, "mouthLowerDown_C", val * 1.0);
+    if (nodes.Wolf3D_Head) {
+        setMorph(nodes.Wolf3D_Head, "viseme_aa", val);
+        setMorph(nodes.Wolf3D_Head, "mouthOpen", val);
+        setMorph(nodes.Wolf3D_Head, "mouthUpperUp_C", val);
+        setMorph(nodes.Wolf3D_Head, "mouthLowerDown_C", val);
     }
 
-    // D. ANIMATE DENTURES
-    if (teethMesh) {
-        setMorph(teethMesh, "mouthOpen", val);
+    // Apply speech morph to our new dentures too!
+    if (denturesRef.current) {
+        setMorph(denturesRef.current, "mouthOpen", val);
     }
   });
 
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
-      
-      {/* Draw the rest of the body normally */}
       {Object.keys(nodes).map((name) => {
         const node = nodes[name];
-        // Don't draw original teeth (we hid them manually, but this is double safety)
+        // Hide original teeth
         if (name === "Wolf3D_Teeth") return null;
-
+        
         if (node.isSkinnedMesh || node.isMesh) {
           return (
             <skinnedMesh
@@ -180,31 +205,28 @@ export const Avatar = (props) => {
         return null;
       })}
       
-      {/* --- CALIBRATION UI --- */}
+      {/* UI PANEL */}
       <Html position={[0, 0, 0]} zIndexRange={[100, 0]}>
         <div style={{
             position: "fixed", top: "10px", right: "10px", 
             background: "rgba(0,0,0,0.8)", padding: "15px", 
             color: "white", borderRadius: "8px", width: "250px",
-            fontFamily: "monospace", fontSize: "12px"
+            fontFamily: "monospace", fontSize: "12px", border: "1px solid yellow"
         }}>
-            <h3 style={{margin:"0 0 10px 0"}}>🦷 DENTURE CALIBRATOR</h3>
-            <div style={{color:"yellow", marginBottom:"10px"}}>TEETH ARE NOW UN-RIGGED. SLIDERS WILL WORK.</div>
+            <h3 style={{margin:"0 0 10px 0", color: "yellow"}}>🔧 FINAL FIXER</h3>
+            <div style={{marginBottom:"10px", fontWeight:"bold"}}>{debugMsg}</div>
 
-            <label>MOUTH OPEN (Test): {manualOpen.toFixed(2)}</label>
+            <label>MOUTH OPEN: {manualOpen.toFixed(2)}</label>
             <input type="range" min="0" max="1" step="0.01" value={manualOpen} onChange={(e)=>setManualOpen(parseFloat(e.target.value))} style={{width:"100%"}} />
-
-            <div style={{height:"10px"}}></div>
+            <br/><br/>
 
             <label>UP / DOWN (Y): {teethY.toFixed(3)}</label>
-            <input type="range" min="-0.15" max="0.15" step="0.001" value={teethY} onChange={(e)=>setTeethY(parseFloat(e.target.value))} style={{width:"100%"}} />
-            
-            <div style={{height:"10px"}}></div>
+            <input type="range" min="-0.2" max="0.2" step="0.001" value={teethY} onChange={(e)=>setTeethY(parseFloat(e.target.value))} style={{width:"100%"}} />
+            <br/><br/>
 
-            <label>FORWARD / BACK (Z): {teethZ.toFixed(3)}</label>
-            <input type="range" min="-0.10" max="0.10" step="0.001" value={teethZ} onChange={(e)=>setTeethZ(parseFloat(e.target.value))} style={{width:"100%"}} />
-
-            <div style={{height:"10px"}}></div>
+            <label>FWD / BACK (Z): {teethZ.toFixed(3)}</label>
+            <input type="range" min="-0.1" max="0.1" step="0.001" value={teethZ} onChange={(e)=>setTeethZ(parseFloat(e.target.value))} style={{width:"100%"}} />
+            <br/><br/>
             
             <label>SCALE: {teethScale.toFixed(2)}</label>
             <input type="range" min="0.5" max="2.0" step="0.01" value={teethScale} onChange={(e)=>setTeethScale(parseFloat(e.target.value))} style={{width:"100%"}} />
