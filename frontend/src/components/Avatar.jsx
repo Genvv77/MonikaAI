@@ -19,14 +19,15 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   
-  // Smoothing Ref
+  // Physics State
   const currentOpen = useRef(0);
 
-  // --- 3. CLEAN ANIMATIONS ---
+  // --- 3. CLEAN ANIMATIONS (Prevent Locking) ---
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
         clip.tracks = clip.tracks.filter((track) => {
+            // Remove ANY facial animation tracks
             return !track.name.includes("morphTargetInfluences") && 
                    !track.name.includes("Jaw") && 
                    !track.name.includes("Tongue");
@@ -35,34 +36,39 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 4. FIND JAW BONE ---
-  const jawBone = useMemo(() => {
+  // --- 4. SMART FINDER: HEAD & JAW ---
+  const { headMesh, jawBone } = useMemo(() => {
+    let head = null;
     let jaw = null;
+    let maxMorphs = 0;
+
+    // A. Find the Mesh with the most morph targets (This is undoubtedly the Head)
     scene.traverse((child) => {
-      if (child.isBone && (child.name.includes("Jaw") || child.name.includes("jaw"))) {
+      if ((child.isMesh || child.isSkinnedMesh) && child.morphTargetDictionary) {
+        const count = Object.keys(child.morphTargetDictionary).length;
+        if (count > maxMorphs) {
+          maxMorphs = count;
+          head = child;
+        }
+      }
+      // B. Find the Jaw Bone
+      if (child.isBone && (child.name.toLowerCase().includes("jaw"))) {
         jaw = child;
       }
     });
-    return jaw;
+
+    console.log("🔍 DEBUG AVATAR FOUND:");
+    console.log("HEAD:", head ? head.name : "NOT FOUND");
+    console.log("JAW:", jaw ? jaw.name : "NOT FOUND");
+    
+    return { headMesh: head, jawBone: jaw };
   }, [scene]);
 
-  // --- 5. FIND ALL MORPHABLE MESHES (The Fix) ---
-  // We find EVERY mesh that has morph targets, not just "Wolf3D_Head"
-  const morphMeshes = useMemo(() => {
-    const targets = [];
-    scene.traverse((child) => {
-      if ((child.isMesh || child.isSkinnedMesh) && child.morphTargetDictionary) {
-        targets.push(child);
-      }
-    });
-    return targets;
-  }, [scene]);
-
-  // --- 6. ANIMATION CONTROLLER ---
+  // --- 5. ANIMATION PLAYBACK ---
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
     
-    if (loading) { /* Optional */ }
+    if (loading) { /* Thinking */ }
     
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
@@ -76,7 +82,7 @@ export const Avatar = (props) => {
     }
   }, [message, loading, actions]);
 
-  // --- 7. AUDIO SETUP ---
+  // --- 6. AUDIO SETUP ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -90,7 +96,7 @@ export const Avatar = (props) => {
     }
   }, []);
 
-  // --- 8. AUDIO PLAYBACK ---
+  // --- 7. PLAY AUDIO ---
   useEffect(() => {
     if (!message) return;
     if (!message.audio) { setTimeout(onMessagePlayed, 3000); return; }
@@ -107,7 +113,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 9. UNIVERSAL LIP SYNC LOOP ---
+  // --- 8. SYNC LOOP (The Mover) ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -118,46 +124,41 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      if (average < 5) average = 0; // Noise Gate
+      if (average < 10) average = 0; // Noise Gate
 
-      // Audio Sensitivity
+      // Volume Sensitivity
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.0;
       if (value > 1) value = 1;
       targetOpen = value;
     } 
 
-    // Smooth Damping
+    // Smooth movement
     currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 20, delta);
     const val = currentOpen.current;
 
-    // A. ANIMATE ALL MESHES (Lips/Skin)
-    morphMeshes.forEach((mesh) => {
-        const dict = mesh.morphTargetDictionary;
-        const influ = mesh.morphTargetInfluences;
-        if (!dict || !influ) return;
-
-        // 1. OPEN MOUTH (Viseme AA / Jaw Open)
+    // A. MOVE LIPS (Using the found Head Mesh)
+    if (headMesh) {
+        const dict = headMesh.morphTargetDictionary;
+        const influ = headMesh.morphTargetInfluences;
+        
+        // Try every common name for "Open Mouth"
         const openIdx = dict["viseme_aa"] || dict["mouthOpen"] || dict["jawOpen"];
         if (openIdx !== undefined) influ[openIdx] = val;
 
-        // 2. SMILE (Widen Lips)
-        // Adds realism by pulling corners of mouth
+        // Try "Smile" for shaping
         const smileIdx = dict["mouthSmile"] || dict["viseme_E"];
         if (smileIdx !== undefined) influ[smileIdx] = val * 0.2;
-        
-        // 3. UPPER LIP UP (Show Top Teeth)
-        const upperIdx = dict["mouthUpperUp_C"] || dict["mouthUpperUp"];
-        if (upperIdx !== undefined) influ[upperIdx] = val * 0.5;
-    });
+    }
 
-    // B. ANIMATE JAW BONE (Teeth Separation)
+    // B. MOVE JAW BONE (Critical for Teeth)
     if (jawBone) {
-        // Rotate physically
+        // Rotate downwards on X axis
+        // 0.2 radians is approximately 11 degrees
         jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.2, 0.3);
     }
   });
 
-  // --- 10. RENDERER ---
+  // --- 9. RENDERER ---
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
