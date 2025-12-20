@@ -19,54 +19,32 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
   
-  // Physics State
+  // Physics State (for smoothness)
   const currentOpen = useRef(0);
 
-  // --- 3. CLEAN ANIMATIONS ---
+  // --- 3. AGGRESSIVE CLEANER ---
+  // We strip ALL face data from the idle/dancing animations so they don't lock the face.
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
         clip.tracks = clip.tracks.filter((track) => {
-            return !track.name.includes("morphTargetInfluences") && 
-                   !track.name.includes("Jaw") && 
-                   !track.name.includes("Tongue");
+            const name = track.name.toLowerCase();
+            return !name.includes("morph") && 
+                   !name.includes("jaw") && 
+                   !name.includes("tongue") &&
+                   !name.includes("head");
         });
       });
     }
   }, [animations]);
 
-  // --- 4. EXPLICIT IDENTITY FINDER (The Fix) ---
+  // --- 4. IDENTITY CONFIRMED FINDER ---
   const { headMesh, teethMesh } = useMemo(() => {
-    let head = null;
-    let teeth = null;
-
-    scene.traverse((child) => {
-      if ((child.isMesh || child.isSkinnedMesh) && child.morphTargetDictionary) {
-        
-        // A. FIND TEETH: Check if name contains "teeth"
-        if (child.name.toLowerCase().includes("teeth")) {
-            teeth = child;
-        }
-
-        // B. FIND HEAD: Must have mouth morphs AND NOT be teeth/eyes
-        // This prevents the "Identity Theft" bug where teeth act as head.
-        else if (
-            (child.morphTargetDictionary["viseme_aa"] !== undefined || 
-             child.morphTargetDictionary["mouthOpen"] !== undefined) &&
-            !child.name.toLowerCase().includes("teeth") &&
-            !child.name.toLowerCase().includes("eye")
-        ) {
-            head = child;
-        }
-      }
-    });
-
-    console.log("🔍 FINAL DEBUG:");
-    console.log("HEAD MESH:", head ? head.name : "❌ NOT FOUND");
-    console.log("TEETH MESH:", teeth ? teeth.name : "❌ NOT FOUND");
-
+    // We hardcode the names since your debug logs confirmed them!
+    const head = nodes.Wolf3D_Head;
+    const teeth = nodes.Wolf3D_Teeth;
     return { headMesh: head, teethMesh: teeth };
-  }, [scene]);
+  }, [nodes]);
 
   // --- 5. ANIMATION CONTROLLER ---
   useEffect(() => {
@@ -117,7 +95,7 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 8. SYNC LOOP ---
+  // --- 8. OVERDRIVE SYNC LOOP ---
   useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
@@ -128,43 +106,46 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      if (average < 5) average = 0; 
+      if (average < 5) average = 0; // Noise Gate
+
+      // Volume Boost (2.5x) ensures even quiet audio opens the mouth
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.5;
       if (value > 1) value = 1;
       targetOpen = value;
     } 
 
-    currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 18, delta);
+    // Smooth movement
+    currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 15, delta);
     const val = currentOpen.current;
 
-    // A. ANIMATE HEAD (Skin)
-    if (headMesh) {
-        const dict = headMesh.morphTargetDictionary;
-        const influ = headMesh.morphTargetInfluences;
+    // --- HELPER: Apply value to multiple targets safely ---
+    const applyMorph = (mesh, targetNames, value) => {
+        if (!mesh || !mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
         
-        // Open
-        const openIdx = dict["viseme_aa"] || dict["mouthOpen"] || dict["jawOpen"];
-        if (openIdx !== undefined) influ[openIdx] = val;
+        targetNames.forEach((name) => {
+            const idx = mesh.morphTargetDictionary[name];
+            if (idx !== undefined) {
+                mesh.morphTargetInfluences[idx] = value;
+            }
+        });
+    };
 
-        // Smile (Widen)
-        const smileIdx = dict["mouthSmile"] || dict["viseme_E"];
-        if (smileIdx !== undefined) influ[smileIdx] = val * 0.2;
+    // A. DRIVE HEAD (Skin)
+    if (headMesh) {
+        // 1. OPEN: We trigger ALL open shapes to guarantee movement
+        applyMorph(headMesh, ["viseme_aa", "mouthOpen", "jawOpen"], val);
 
-        // Upper Lip (Show Top Teeth)
-        const upperIdx = dict["mouthUpperUp_C"] || dict["mouthUpperUp"];
-        if (upperIdx !== undefined) influ[upperIdx] = val * 0.5;
+        // 2. WIDEN: Smile prevents "Pac-Man" mouth
+        applyMorph(headMesh, ["mouthSmile", "viseme_E"], val * 0.3);
+
+        // 3. LIFT LIP: Shows Upper Teeth (Critical for realism)
+        applyMorph(headMesh, ["mouthUpperUp_C", "mouthUpperUp"], val * 0.6);
     }
 
-    // B. ANIMATE TEETH (Sync)
-    // Since we have no Jaw Bone (based on logs), we force the teeth mesh 
-    // to use its own "viseme_aa" to match the head.
-    if (teethMesh && teethMesh.morphTargetDictionary && teethMesh.morphTargetInfluences) {
-        const tDict = teethMesh.morphTargetDictionary;
-        const tInflu = teethMesh.morphTargetInfluences;
-
-        // Apply the same "Open" value to the teeth
-        const tOpenIdx = tDict["viseme_aa"] || tDict["mouthOpen"] || tDict["jawOpen"];
-        if (tOpenIdx !== undefined) tInflu[tOpenIdx] = val;
+    // B. DRIVE TEETH (Sync)
+    if (teethMesh) {
+        // Apply the exact same "Open" force to the teeth mesh
+        applyMorph(teethMesh, ["viseme_aa", "mouthOpen", "jawOpen"], val);
     }
   });
 
