@@ -1,8 +1,9 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
 import { useChat } from "../hooks/useChat";
+import { Html } from "@react-three/drei"; // Allows HTML overlay
 
 export const Avatar = (props) => {
   const { nodes, scene } = useGLTF("/models/monika_v99.glb");
@@ -15,11 +16,16 @@ export const Avatar = (props) => {
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
-  
-  // Physics Refs (Smoothness)
   const currentViseme = useRef({ open: 0, smile: 0 });
 
-  // --- 1. ANIMATION CLEANER ---
+  // --- CALIBRATION STATE ---
+  // These control the position in real-time
+  const [teethY, setTeethY] = useState(-0.02); // Start 2cm down
+  const [teethZ, setTeethZ] = useState(0.01);  // Start 1cm forward
+  const [teethScale, setTeethScale] = useState(1.2);
+  const [manualOpen, setManualOpen] = useState(0); // For testing without audio
+
+  // --- 1. CLEAN ANIMATIONS ---
   useEffect(() => {
     if (animations) {
       animations.forEach((clip) => {
@@ -31,7 +37,7 @@ export const Avatar = (props) => {
     }
   }, [animations]);
 
-  // --- 2. TEETH PLACEMENT (Manual Fix) ---
+  // --- 2. TEETH SETUP ---
   const { headMesh, teethMesh, jawBone } = useMemo(() => {
     const head = nodes.Wolf3D_Head;
     const teeth = nodes.Wolf3D_Teeth;
@@ -46,14 +52,7 @@ export const Avatar = (props) => {
             teeth.material = teeth.material.clone();
             teeth.material.transparent = false;
             teeth.material.side = THREE.FrontSide;
-            teeth.material.depthTest = true;
-        }
-        if (!teeth.userData.fixed) {
-            // Drop 2cm, Forward 1cm
-            teeth.position.y -= 0.02; 
-            teeth.position.z += 0.01; 
-            teeth.scale.set(1.1, 1.1, 1.1); 
-            teeth.userData.fixed = true;
+            teeth.material.depthTest = true; 
         }
     }
     return { headMesh: head, teethMesh: teeth, jawBone: jaw };
@@ -99,28 +98,29 @@ export const Avatar = (props) => {
     audio.onended = onMessagePlayed;
   }, [message]);
 
-  // --- 6. LIP ARTICULATION LOOP ---
+  // --- 6. RENDER LOOP ---
   useFrame((state, delta) => {
+    // A. APPLY SLIDER VALUES INSTANTLY
+    if (teethMesh) {
+        teethMesh.position.y = teethY;
+        teethMesh.position.z = teethZ;
+        teethMesh.scale.set(teethScale, teethScale, teethScale);
+    }
+
+    // B. CALCULATE OPENING (Audio vs Manual Slider)
     const audio = audioRef.current;
-    let targetOpen = 0;
+    let targetOpen = manualOpen; // Default to slider
     let targetSmile = 0;
 
-    if (!audio.paused && !audio.ended && analyserRef.current) {
+    if (manualOpen === 0 && !audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
-      
-      // Spectral Analysis (Bass vs Treble)
-      let bass = 0, mid = 0, high = 0;
-      for (let i = 0; i < 10; i++) bass += dataArrayRef.current[i];
+      let mid = 0, high = 0;
       for (let i = 10; i < 50; i++) mid += dataArrayRef.current[i];
       for (let i = 50; i < 150; i++) high += dataArrayRef.current[i];
+      mid /= 40; high /= 100;
 
-      bass /= 10; mid /= 40; high /= 100;
-      if (bass < 20) bass = 0;
-
-      // Logic: Mids open mouth, Highs widen it
-      targetOpen = (mid / 255) * 2.2; 
+      targetOpen = (mid / 255) * 2.5; 
       targetSmile = (high / 255) * 1.5;
-
       if (targetOpen > 1) targetOpen = 1;
     } 
 
@@ -131,38 +131,30 @@ export const Avatar = (props) => {
     const smileVal = currentViseme.current.smile;
 
     const setMorph = (mesh, name, v) => {
-        if (mesh && mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
+        if (mesh?.morphTargetDictionary && mesh?.morphTargetInfluences) {
             const idx = mesh.morphTargetDictionary[name];
             if (idx !== undefined) mesh.morphTargetInfluences[idx] = v;
         }
     };
 
-    // A. HEAD (The "Curtain Lift")
+    // C. ANIMATE FACE
     if (headMesh) {
         setMorph(headMesh, "viseme_aa", val);
         setMorph(headMesh, "mouthOpen", val);
         setMorph(headMesh, "mouthSmile", smileVal * 0.4);
-
-        // --- THE FIX IS HERE ---
-        // We force the Upper Lip to lift HIGHER than the jaw drops.
-        // This guarantees teeth visibility.
-        setMorph(headMesh, "mouthUpperUp_C", val * 1.2); 
-        setMorph(headMesh, "mouthUpperUp", val * 1.0);
         
-        // We pull the Lower Lip DOWN to clear the bottom teeth
-        setMorph(headMesh, "mouthLowerDown_C", val * 1.2);
+        // Lift upper lip to show top teeth
+        setMorph(headMesh, "mouthUpperUp_C", val * 1.0);
+        // Drop lower lip to show bottom teeth
+        setMorph(headMesh, "mouthLowerDown_C", val * 1.0);
     }
 
-    // B. TEETH (Match Opening)
     if (teethMesh) {
         setMorph(teethMesh, "mouthOpen", val);
-        setMorph(teethMesh, "mouthSmile", smileVal * 0.4);
     }
 
-    // C. JAW BONE (Physics)
     if (jawBone) {
-        // Rotate down ~12 degrees
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.2, 0.2);
+        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, val * 0.15, 0.2);
     }
   });
 
@@ -186,6 +178,36 @@ export const Avatar = (props) => {
         }
         return null;
       })}
+      
+      {/* --- CALIBRATION UI OVERLAY --- */}
+      <Html position={[0, 0, 0]} zIndexRange={[100, 0]}>
+        <div style={{
+            position: "fixed", top: "10px", right: "10px", 
+            background: "rgba(0,0,0,0.8)", padding: "15px", 
+            color: "white", borderRadius: "8px", width: "250px",
+            fontFamily: "monospace", fontSize: "12px"
+        }}>
+            <h3 style={{margin:"0 0 10px 0"}}>🦷 TEETH CALIBRATOR</h3>
+            
+            <label>MOUTH OPEN (Test): {manualOpen.toFixed(2)}</label>
+            <input type="range" min="0" max="1" step="0.01" value={manualOpen} onChange={(e)=>setManualOpen(parseFloat(e.target.value))} style={{width:"100%"}} />
+
+            <div style={{height:"10px"}}></div>
+
+            <label>UP / DOWN (Y): {teethY.toFixed(3)}</label>
+            <input type="range" min="-0.08" max="0.05" step="0.001" value={teethY} onChange={(e)=>setTeethY(parseFloat(e.target.value))} style={{width:"100%"}} />
+            
+            <div style={{height:"10px"}}></div>
+
+            <label>FORWARD / BACK (Z): {teethZ.toFixed(3)}</label>
+            <input type="range" min="-0.05" max="0.05" step="0.001" value={teethZ} onChange={(e)=>setTeethZ(parseFloat(e.target.value))} style={{width:"100%"}} />
+
+            <div style={{height:"10px"}}></div>
+            
+            <label>SCALE (Size): {teethScale.toFixed(2)}</label>
+            <input type="range" min="0.5" max="2.0" step="0.01" value={teethScale} onChange={(e)=>setTeethScale(parseFloat(e.target.value))} style={{width:"100%"}} />
+        </div>
+      </Html>
     </group>
   );
 };
