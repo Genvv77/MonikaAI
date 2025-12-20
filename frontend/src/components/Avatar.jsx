@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
@@ -18,6 +18,10 @@ export const Avatar = (props) => {
   const audioRef = useRef(new Audio());
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
+  
+  // Smoothing Refs (Physics for lips)
+  const currentOpen = useRef(0);
+  const currentPucker = useRef(0);
 
   // --- 3. CLEAN ANIMATIONS ---
   useEffect(() => {
@@ -93,7 +97,7 @@ export const Avatar = (props) => {
   }, [message]);
 
   // --- 8. ORGANIC LIP SYNC LOOP ---
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const audio = audioRef.current;
     let targetOpen = 0;
     let targetPucker = 0;
@@ -104,63 +108,59 @@ export const Avatar = (props) => {
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      // 1. Boost Sensitivity (multiply by 2.0 so quieter sounds register)
-      if (average < 5) average = 0; // Very low noise gate
-      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.0;
+      // Noise Gate
+      if (average < 5) average = 0; 
+
+      // Input Gain (Boost volume signal)
+      let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1) * 2.5;
       if (value > 1) value = 1;
 
-      // 2. Add Jitter (Randomness) so it doesn't look robotic
-      // We use sine waves based on time to oscillate the value slightly
-      const jitter = Math.sin(state.clock.elapsedTime * 10) * 0.1;
-      targetOpen = value + jitter;
-      if (targetOpen < 0) targetOpen = 0;
-
-      // 3. Calculate "Pucker" (O Shape)
-      // When talking, we sometimes pucker lips. We do this when volume is MEDIUM.
-      // If volume is LOUD (Ahhh), pucker goes down.
-      targetPucker = value * 0.5 * (1 - value); 
+      // A. Vowel Mixing (Ah vs Oh)
+      // Low/Mid volume = Pucker (Oh/Uuu)
+      // High volume = Open (Ahhh)
+      targetOpen = value;
+      targetPucker = value * 0.4 * (1 - value); // Peak pucker at mid-volume
     } 
-    else {
-        targetOpen = 0;
-        targetPucker = 0;
-    }
 
-    // A. JAW BONE (Teeth Separation)
-    // Rotate 0.1 radians max. Enough to see teeth, but not unhinge jaw.
-    if (jawBone) {
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetOpen * 0.15, 0.2);
-    }
+    // --- PHYSICS DAMPING (Smoothness) ---
+    // Instead of snapping, we move towards target using damp().
+    // 0.15 is the smoothing time. Lower = snappier, Higher = floatier.
+    const smoothTime = 0.12; 
+    currentOpen.current = THREE.MathUtils.damp(currentOpen.current, targetOpen, 20, delta);
+    currentPucker.current = THREE.MathUtils.damp(currentPucker.current, targetPucker, 20, delta);
 
-    // B. LIP ANIMATION (Complex Mixing)
+    const openVal = currentOpen.current;
+    const puckerVal = currentPucker.current;
+
+    // --- APPLY TO MESH ---
     if (nodes.Wolf3D_Head) {
-        const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
+        const dict = nodes.Wolf3D_Head.morphTargetDictionary;
+        const influ = nodes.Wolf3D_Head.morphTargetInfluences;
+
+        // 1. PRIMARY: Jaw Open (viseme_aa)
+        const aaIdx = dict["viseme_aa"] || dict["mouthOpen"];
+        if (aaIdx !== undefined) influ[aaIdx] = openVal;
+
+        // 2. SECONDARY: Pucker/Shape (viseme_U or mouthPucker)
+        const uIdx = dict["viseme_U"] || dict["mouthPucker"];
+        if (uIdx !== undefined) influ[uIdx] = puckerVal;
+
+        // 3. TERTIARY: Muscle Engagement (The Anti-Robot Fix)
+        // When we talk loudly, our cheeks raise and mouth corners tighten.
         
-        // 1. MAIN OPENING (Viseme AA)
-        const openIdx = dictionary["viseme_aa"] || dictionary["mouthOpen"];
-        if (openIdx !== undefined) {
-             const current = nodes.Wolf3D_Head.morphTargetInfluences[openIdx];
-             // 0.5 lerp = smoother, less jittery
-             nodes.Wolf3D_Head.morphTargetInfluences[openIdx] = THREE.MathUtils.lerp(current, targetOpen, 0.5);
-        }
+        // Cheek Squint (Subtle)
+        const cheekIdx = dict["cheekSquintLeft"] || dict["cheekPuff"];
+        if (cheekIdx !== undefined) influ[cheekIdx] = openVal * 0.3;
 
-        // 2. LIP SHAPING (Viseme U / O / Pucker)
-        // This makes the mouth round instead of just wide
-        const puckerIdx = dictionary["viseme_U"] || dictionary["viseme_O"] || dictionary["mouthPucker"];
-        if (puckerIdx !== undefined) {
-             const current = nodes.Wolf3D_Head.morphTargetInfluences[puckerIdx];
-             nodes.Wolf3D_Head.morphTargetInfluences[puckerIdx] = THREE.MathUtils.lerp(current, targetPucker, 0.5);
-        }
+        // Upper Lip Raise (Shows teeth naturally)
+        const upperLipIdx = dict["mouthUpperUpLeft"]; 
+        if (upperLipIdx !== undefined) influ[upperLipIdx] = openVal * 0.4;
+    }
 
-        // 3. TEETH FIX (Keep lips above teeth)
-        // We slightly raise the upper lip if volume is high
-        const upperLipIdx = dictionary["mouthUpperUpLeft"]; // Usually works on whole lip for RPM
-        if (upperLipIdx !== undefined) {
-             nodes.Wolf3D_Head.morphTargetInfluences[upperLipIdx] = THREE.MathUtils.lerp(
-                 nodes.Wolf3D_Head.morphTargetInfluences[upperLipIdx], 
-                 targetOpen * 0.3, 
-                 0.5
-             );
-        }
+    // --- APPLY TO JAW BONE ---
+    if (jawBone) {
+        // Rotate jaw downwards. 0.15 rads max.
+        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, openVal * 0.15, 0.3);
     }
   });
 
@@ -168,7 +168,6 @@ export const Avatar = (props) => {
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
-      
       {Object.keys(nodes).map((name) => {
         const node = nodes[name];
         if (node.isSkinnedMesh || node.isMesh) {
