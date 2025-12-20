@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
 import * as THREE from "three";
@@ -19,23 +19,37 @@ export const Avatar = (props) => {
   const analyserRef = useRef(null);
   const dataArrayRef = useRef(null);
 
-  // --- 3. FIND THE JAW BONE ---
-  // We search for the bone that controls the jaw.
-  const jawBone = useMemo(() => {
-    let jaw = null;
-    scene.traverse((child) => {
-      if (child.isBone && (child.name.includes("Jaw") || child.name.includes("jaw"))) {
-        jaw = child;
-      }
-    });
-    return jaw;
-  }, [scene]);
+  // --- 3. THE CLEANER (CRITICAL FIX) ---
+  // This removes any face movement from the downloaded animations.
+  // This stops the animation from forcing the mouth open.
+  useEffect(() => {
+    if (animations) {
+      animations.forEach((clip) => {
+        clip.tracks = clip.tracks.filter((track) => {
+            // Keep body parts, DELETE anything related to the face/morphs
+            return !track.name.includes("morphTargetInfluences") && 
+                   !track.name.includes("Jaw") && 
+                   !track.name.includes("Tongue");
+        });
+      });
+    }
+  }, [animations]);
 
-  // --- 4. ANIMATION CONTROLLER ---
+  // --- 4. DYNAMIC TEETH FINDER ---
+  // Finds any mesh that looks like teeth (Wolf3D_Teeth, Teeth, etc.)
+  const teethNode = useMemo(() => {
+    return Object.values(nodes).find((node) => 
+        (node.name.includes("Teeth") || node.name.includes("teeth")) && 
+        node.morphTargetDictionary && 
+        node.morphTargetInfluences
+    );
+  }, [nodes]);
+
+  // --- 5. ANIMATION CONTROLLER ---
   useEffect(() => {
     let actionToPlay = actions["Standing_Idle"] || actions["Idle"] || Object.values(actions)[0];
     
-    if (loading) { /* Optional: Thinking */ }
+    if (loading) { /* Optional */ }
     
     if (message && message.animation && actions[message.animation]) {
       actionToPlay = actions[message.animation];
@@ -49,7 +63,7 @@ export const Avatar = (props) => {
     }
   }, [message, loading, actions]);
 
-  // --- 5. AUDIO SETUP ---
+  // --- 6. AUDIO SETUP ---
   useEffect(() => {
     if (!analyserRef.current) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -63,80 +77,75 @@ export const Avatar = (props) => {
     }
   }, []);
 
-  // --- 6. AUDIO PLAYBACK ---
   useEffect(() => {
     if (!message) return;
-
-    if (!message.audio) {
-        setTimeout(onMessagePlayed, 3000);
-        return;
-    }
+    if (!message.audio) { setTimeout(onMessagePlayed, 3000); return; }
 
     const audio = audioRef.current;
-    if (message.audio.startsWith("data:audio")) {
-        audio.src = message.audio;
-    } else {
-        audio.src = "data:audio/mp3;base64," + message.audio;
-    }
-    
+    audio.src = message.audio.startsWith("data:audio") ? message.audio : "data:audio/mp3;base64," + message.audio;
     audio.volume = 1.0;
     audio.currentTime = 0;
 
     if (analyserRef.current && analyserRef.current.context.state === 'suspended') {
         analyserRef.current.context.resume();
     }
-
-    audio.play().catch(e => { console.error("Audio Error:", e); onMessagePlayed(); });
+    audio.play().catch(e => { onMessagePlayed(); });
     audio.onended = onMessagePlayed;
-
   }, [message]);
 
-  // --- 7. HYBRID LIP SYNC (Bone + Morph) ---
+  // --- 7. LIP SYNC FRAME LOOP ---
   useFrame(() => {
+    if (!nodes.Wolf3D_Head) return;
+
+    // A. SETUP TARGETS
+    // We prioritize 'viseme_aa' because 'mouthOpen' is often too huge/scary
+    const headDict = nodes.Wolf3D_Head.morphTargetDictionary;
+    let headIdx = headDict["viseme_aa"];
+    if (headIdx === undefined) headIdx = headDict["mouthOpen"];
+    
+    if (headIdx === undefined) return; // No mouth targets found
+
+    // B. CALCULATE VOLUME
     const audio = audioRef.current;
     let targetOpen = 0;
 
-    // A. Calculate Volume
     if (!audio.paused && !audio.ended && analyserRef.current) {
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
       let sum = 0;
       for (let i = 10; i < 60; i++) sum += dataArrayRef.current[i];
       let average = sum / 50;
 
-      // Noise Gate
+      // Noise Gate (Prevents hanging open)
       if (average < 20) average = 0; 
-      
-      // Map & Square
+
+      // Math for snappiness
       let value = THREE.MathUtils.mapLinear(average, 0, 100, 0, 1);
-      targetOpen = value * value * 1.5; 
+      targetOpen = value * value * 2.0; // Boosted for visibility
       if (targetOpen > 1) targetOpen = 1;
+    } 
+    else {
+        // FORCE CLOSED if no audio (Fixes "Wide Open" bug)
+        targetOpen = 0;
     }
 
-    // B. ROTATE JAW BONE (Fixes Teeth Issue)
-    // If we found a jaw bone, we rotate it downwards based on volume.
-    if (jawBone) {
-        // Standard rotation for Ready Player Me / Mixamo jaws is usually X or Z axis.
-        // We gently rotate it open. (0.2 radians is usually enough for an open mouth)
-        const targetRotation = targetOpen * 0.2; 
-        
-        // Lerp rotation for smoothness
-        jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, targetRotation, 0.5);
-    }
+    // C. APPLY TO HEAD
+    const currentHead = nodes.Wolf3D_Head.morphTargetInfluences[headIdx];
+    // 0.8 is fast/snappy. 
+    const newHeadValue = THREE.MathUtils.lerp(currentHead, targetOpen, 0.8);
+    nodes.Wolf3D_Head.morphTargetInfluences[headIdx] = newHeadValue;
 
-    // C. ALSO DO MORPH TARGETS (For Lips)
-    if (nodes.Wolf3D_Head) {
-        const dictionary = nodes.Wolf3D_Head.morphTargetDictionary;
-        // Prioritize "viseme_aa" (Lip shape) over "mouthOpen" (Jaw shape)
-        const mouthIdx = dictionary["viseme_aa"] || dictionary["mouthOpen"];
+    // D. APPLY TO TEETH (Sync)
+    if (teethNode) {
+        let teethIdx = teethNode.morphTargetDictionary["viseme_aa"];
+        if (teethIdx === undefined) teethIdx = teethNode.morphTargetDictionary["mouthOpen"];
         
-        if (mouthIdx !== undefined) {
-             const current = nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx];
-             nodes.Wolf3D_Head.morphTargetInfluences[mouthIdx] = THREE.MathUtils.lerp(current, targetOpen, 0.5);
+        if (teethIdx !== undefined) {
+             teethNode.morphTargetInfluences[teethIdx] = newHeadValue;
         }
     }
   });
 
-  // --- 8. ROBUST RENDERER ---
+  // --- 8. RENDERER ---
   return (
     <group {...props} dispose={null} ref={group}>
       <primitive object={nodes.Hips || nodes.mixamorigHips || nodes.root} />
