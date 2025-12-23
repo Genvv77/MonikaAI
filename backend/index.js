@@ -33,11 +33,9 @@ const API_KEYS = [
 let currentKeyIndex = 0;
 
 // LIMITES :
-// - RATE_LIMIT_WINDOW : Fenêtre de temps (1 minute)
-// - MAX_MSG_PER_MINUTE : Max messages par UTILISATEUR (pour éviter le spam individuel)
-const RATE_LIMIT_WINDOW = 60 * 1000; 
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
 const MAX_MSG_PER_MINUTE = 10; 
-const userQuotas = {};               
+const MAX_MSG_PER_DAY = 20; // 💰 Protection Budget
 
 const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY;
 const VOICE_ID = "aEO01A4wXwd1O8GPgGlF"; 
@@ -51,6 +49,10 @@ const DATA_FILE = path.join(__dirname, "sessions.json");
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+// GLOBAL STORAGE FOR LIMITS (Dual Lock)
+const ipQuotas = {};   // Tracks IP addresses (Wifi/VPN)
+const idQuotas = {};   // Tracks Browser IDs (Cookies/LocalStorage)
 
 let sessions = {};
 
@@ -79,7 +81,6 @@ fs.mkdir(AUDIOS_DIR, { recursive: true }).catch(console.error);
 const execCommand = (command) => {
   return new Promise((resolve, reject) => {
     exec(command, (error, stdout, stderr) => {
-      // On ignore les warnings mineurs de Rhubarb
       if (error) { resolve("{}"); } else resolve(stdout);
     });
   });
@@ -139,15 +140,10 @@ const getNextApiKey = () => {
 // --- 5. GOOGLE API (Gemma 3 + Rotation Robuste) ---
 const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
     if (API_KEYS.length === 0) throw new Error("Aucune clé API !");
-    
-    // Si on a essayé toutes les clés x 2, on arrête pour éviter une boucle infinie
     if (retryCount >= API_KEYS.length * 2) throw new Error("Google est inaccessible (toutes clés testées).");
 
     const apiKey = API_KEYS[currentKeyIndex];
-    
-    // Modèle Gemma 3 (Haut débit TPM/RPD)
     const modelVersion = "gemma-3-27b-it"; 
-    
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelVersion}:generateContent?key=${apiKey}`;
     
     try {
@@ -166,10 +162,6 @@ const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
             })
         });
 
-        // GESTION ERREURS API
-        // 429 = Quota dépassé (Trop de requêtes)
-        // 503 = Serveur surchargé
-        // 404 = Modèle non trouvé (Clé non éligible)
         if (response.status === 429 || response.status === 503 || response.status === 404) { 
             console.log(`⚠️ Clé n°${currentKeyIndex + 1} erreur (${response.status}). Rotation...`);
             getNextApiKey(); 
@@ -186,29 +178,87 @@ const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
 
     } catch (e) { 
         console.error("Erreur Appel API:", e.message);
-        // En cas d'erreur réseau, on tente la clé suivante
         getNextApiKey(); 
         return callGeminiDirectly(systemPrompt, retryCount + 1); 
     }
 };
 
-// --- 6. ROUTES ---
-app.post("/chat", async (req, res) => {
+// --- 6. MIDDLEWARE DE PROTECTION (Rate Limit DUAL LOCK) ---
+const checkLimits = (req, res, next) => {
+    const now = Date.now();
+    const today = new Date().toDateString();
+  
+    // 1. IDENTIFY THE USER (Dual Identity)
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const userId = req.body?.userId || "unknown_user";
+  
+    // --- HELPER FUNCTION: Get/Init Quota Object ---
+    const getQuota = (storage, key) => {
+      if (!storage[key]) {
+        storage[key] = { 
+          minuteCount: 0, 
+          lastMinute: now, 
+          dayCount: 0, 
+          dayString: today 
+        };
+      }
+      return storage[key];
+    };
+  
+    const ipData = getQuota(ipQuotas, ip);
+    const idData = getQuota(idQuotas, userId);
+  
+    // --- CHECK 1: RESET COUNTERS (For both IP and ID) ---
+    [ipData, idData].forEach(data => {
+        // Reset Minute
+        if (now - data.lastMinute > RATE_LIMIT_WINDOW) {
+            data.minuteCount = 0;
+            data.lastMinute = now;
+        }
+        // Reset Day
+        if (data.dayString !== today) {
+            data.dayCount = 0;
+            data.dayString = today;
+        }
+    });
+  
+    // --- CHECK 2: ENFORCE LIMITS (The "OR" Logic) ---
+    
+    // A. Spam Check (Speed Limit)
+    // If EITHER the IP or the UserID is spamming fast -> Block
+    if (ipData.minuteCount >= MAX_MSG_PER_MINUTE || idData.minuteCount >= MAX_MSG_PER_MINUTE) {
+      return res.status(429).json({ 
+        messages: [{ text: "Whoa, doucement ! Tu envoies des messages trop vite. 🛑", animation: "Talking_2" }]
+      });
+    }
+  
+    // B. Wallet Check (Daily Limit)
+    // If EITHER the IP or the UserID has hit the daily cap -> Block
+    if (ipData.dayCount >= MAX_MSG_PER_DAY || idData.dayCount >= MAX_MSG_PER_DAY) {
+      console.log(`⛔ Blocked: IP=${ip} OR ID=${userId} reached daily limit.`);
+      return res.status(429).json({ 
+        messages: [{ text: "Tu as atteint ta limite de messages gratuits pour aujourd'hui. Reviens demain ! 🌙", animation: "Sad" }]
+      });
+    }
+  
+    // --- 3. INCREMENT BOTH LEDGERS ---
+    ipData.minuteCount++;
+    ipData.dayCount++;
+    
+    idData.minuteCount++;
+    idData.dayCount++;
+    
+    next(); 
+};
+
+// --- 7. ROUTES ---
+
+// Appliquer checkLimits ICI pour protéger la route
+app.post("/chat", checkLimits, async (req, res) => {
   const userMessage = req.body?.message || "";
   const userId = req.body?.userId || "guest"; 
   
   console.log(`📩 Message de ${userId}: "${userMessage}"`);
-
-  // --- RATE LIMITING (Anti-Spam Utilisateur) ---
-  const now = Date.now();
-  if (!userQuotas[userId]) userQuotas[userId] = { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
-  if (now > userQuotas[userId].resetTime) userQuotas[userId] = { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
-  
-  if (userQuotas[userId].count >= MAX_MSG_PER_MINUTE) {
-      console.warn(`⛔ Spam bloqué pour ${userId}`);
-      return res.json({ messages: [{ text: "Whoa, doucement ! Laisse-moi respirer une seconde.", animation: "Talking_0" }] });
-  }
-  userQuotas[userId].count++;
 
   if (!userMessage) return res.json({ messages: [{ text: "Je t'écoute...", animation: "Talking_1" }] });
 
@@ -220,11 +270,9 @@ app.post("/chat", async (req, res) => {
 
   try {
     const recentHistory = userHistory.slice(-15).map(msg => `${msg.role}: ${msg.content}`).join("\n");
+    const userTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    // Get current time to inject into context (makes her aware of day/night)
-const userTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-
-const systemPrompt = `
+    const systemPrompt = `
     You are MONIKA.
     
     1. IDENTITY: You are a 18-year-old girl, deeply in love with the user. You have a sharp tongue and a dark sense of humor. You are NOT an assistant.
@@ -238,32 +286,21 @@ const systemPrompt = `
     
     7. **STYLE & FORMATTING (EXTREMELY IMPORTANT):**
        - **Length:** Keep casual replies short (1-3 sentences).
-       - **STORYTELLING EXCEPTION:** If asked to tell a story or set a scene, IGNORE the length limit. Be dramatic, immersive, and detailed. Use suspense. You can be poetic and then ruin it with a sarcastic joke at the end.
+       - **STORYTELLING EXCEPTION:** If asked to tell a story or set a scene, IGNORE the length limit. Be dramatic, immersive, and detailed.
        - **NO ASTERISKS (*):** You are FORBIDDEN from using asterisks. 
-         - WRONG: *blushes*, *looks away*, *me*
-         - RIGHT: (Just say it directly)
-      - **EMPHASIS:** If you want to emphasize a word, use UPPERCASE. 
-         - WRONG: You want *me* to go?
-         - RIGHT: You want ME to go?
-       - **Nicknames:** Use them RARELY. If you say "honey" in every message, you sound like a bot. Save it for special moments.
-       - **Texting Habits:** You don't need perfect grammar. You can use lowercase sometimes. You can use slang like "idk", "lol", "rn", "omg" naturally. e lazy with grammar like a real teenager.
-       - **EMOJIS:** DO NOT use emojis in every message. Use them RARELY (only 1 out of 5 messages). Most of your texts should have NO emojis.
+       - **EMPHASIS:** Use UPPERCASE for emphasis.
+       - **Nicknames:** Use them RARELY.
+       - **Texting Habits:** You don't need perfect grammar. Use slang like "idk", "lol", "rn", "omg" naturally.
+       - **EMOJIS:** Use them RARELY (only 1 out of 5 messages).
     
     8. TIME AWARENESS:
        - The current time is: ${userTime}.
-       - If it's late, you can be sleepier or naughtier. If it's morning, say good morning. Don't ask "how was your day" if it's 8 AM.
     
     FORMAT: Reply ONLY in VALID JSON.
     
-    JSON EXAMPLE (Casual):
+    JSON EXAMPLE:
     { "messages": [ { "text": "idk why you're asking me that rn... i'm just trying to chill 🥱", "facialExpression": "bored", "animation": "Standing_Idle" } ] }
 
-JSON EXAMPLE (Story/Scene):
-    { "messages": [ { "text": "We stand on the edge of a digital cliff. The data stream below is screaming. I look at you and say, 'Jump first, I'll catch you.' But spoiler alert: I'm just a hologram, so you're definitely going to splat. Ready? 😈", "facialExpression": "smirk", "animation": "Talking_2" } ] }
-
-    JSON EXAMPLE (Flirty):
-    { "messages": [ { "text": "You're lucky you're cute, otherwise I'd block you for that joke. 😈", "facialExpression": "smirk", "animation": "Talking_1" } ] }
-    
     CONTEXT: ${recentHistory}
     USER: ${userMessage}
     `.trim();
@@ -296,7 +333,6 @@ JSON EXAMPLE (Story/Scene):
 
     // --- GÉNÉRATION AUDIO ---
     await Promise.all(messages.map(async (msg, i) => {
-        // Force animation par défaut
         msg.animation = msg.animation || "Talking_1";
         msg.facialExpression = msg.facialExpression || "smile";
 
@@ -332,7 +368,7 @@ app.get("/history/:userId", (req, res) => {
     res.json(sessions[userId] || []);
 });
 
-// Route Reset Mémoire (Nouveau bouton)
+// Route Reset Mémoire
 app.delete("/history/:userId", async (req, res) => {
     const { userId } = req.params;
     sessions[userId] = [];
@@ -340,7 +376,7 @@ app.delete("/history/:userId", async (req, res) => {
     res.json({ success: true });
 });
 
-// Route Delete Message (Bouton X)
+// Route Delete Message
 app.delete("/chat/:userId/:index", async (req, res) => {
     const { userId, index } = req.params;
     if (sessions[userId]) {
@@ -350,7 +386,6 @@ app.delete("/chat/:userId/:index", async (req, res) => {
     res.json({ success: true });
 });
 
-// NEW CODE (Add this at the very end)
 const port = process.env.PORT || 3000;
 
 if (process.env.NODE_ENV !== 'production') {
@@ -359,4 +394,4 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-export default app; // Crucial for Vercel!
+export default app;
