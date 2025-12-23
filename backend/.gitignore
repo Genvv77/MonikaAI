@@ -6,3 +6,5 @@ audios/message_*
 node_modules
 dist
 .DS_Store
+.vercel
+.env*.local
