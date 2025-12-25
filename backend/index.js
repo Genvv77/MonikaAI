@@ -58,7 +58,7 @@ app.use(cors());
 
 // --- 2. OUTILS (Rhubarb & FFmpeg) ---
 // We moved filesystem calls inside functions to avoid "Read-only" errors on Vercel startup
-const fs = require('fs').promises;
+import fs from "fs/promises";
 
 // Ensure audio dir exists
 fs.mkdir(AUDIOS_DIR, { recursive: true }).catch(() => {});
