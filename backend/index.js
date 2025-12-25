@@ -7,7 +7,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
-import { kv } from "@vercel/kv"; // <--- NEW: Import Vercel KV
+import { kv } from "@vercel/kv"; 
+import { createClient } from '@supabase/supabase-js'; // <--- NEW: Import Supabase
 
 dotenv.config();
 
@@ -19,6 +20,11 @@ process.on('uncaughtException', (err) => {
 ffmpeg.setFfmpegPath(ffmpegInstaller);
 
 // --- 1. CONFIGURATION ---
+// 🚨 Ensure SUPABASE_URL and SUPABASE_KEY are in your .env file
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
 const API_KEYS = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -208,6 +214,42 @@ const checkLimits = async (req, res, next) => {
 
 // --- 6. ROUTES ---
 
+// 🚀 NEW: REDEEM ROUTE (Entry Ticket Only - No Premium)
+app.post("/redeem", async (req, res) => {
+    const { code, userId } = req.body;
+    
+    if (!code || !userId) return res.status(400).json({ success: false, error: "Missing data" });
+
+    try {
+        // 1. Check Code in Supabase
+        const { data, error } = await supabase
+            .from('access_codes')
+            .select('*')
+            .eq('code', code.toUpperCase().trim())
+            .single();
+
+        if (error || !data) return res.status(400).json({ success: false, error: "Invalid code." });
+
+        // 2. Check if Fully Used
+        if (data.used_count >= data.max_uses) {
+             return res.status(400).json({ success: false, error: "Code fully used." });
+        }
+
+        // 3. Increment Counter in Supabase (Mark as used)
+        await supabase
+            .from('access_codes')
+            .update({ used_count: data.used_count + 1 })
+            .eq('id', data.id);
+
+        // NOTE: No premium upgrade here. Just valid code check.
+        return res.json({ success: true, message: "Access Granted." });
+
+    } catch (e) {
+        console.error("Redeem Error:", e);
+        res.status(500).json({ success: false, error: "Server error" });
+    }
+});
+
 app.post("/chat", checkLimits, async (req, res) => {
   const userMessage = req.body?.message || "";
   const userId = req.body?.userId || "guest"; 
@@ -321,4 +363,4 @@ if (process.env.NODE_ENV !== 'production') {
   app.listen(port, () => console.log(`Server listening on port ${port}`));
 }
 
-export default app; 
+export default app;
