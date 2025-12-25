@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { supabase } from "../supabaseClient"; // Make sure to import this!
 
 export const Welcome = ({ onStart }) => {
   const [code, setCode] = useState("");
@@ -22,42 +21,44 @@ export const Welcome = ({ onStart }) => {
     setError("");
 
     const cleanCode = code.toUpperCase().trim();
+    
+    // Get or Create User ID (Required for the backend check)
+    const userId = localStorage.getItem("monika_userid") || "user_" + Date.now();
+    localStorage.setItem("monika_userid", userId);
 
     try {
-        // --- STEP 1: CHECK THE CODE IN DB ---
-        const { data: codeData, error: fetchError } = await supabase
-            .from('access_codes')
-            .select('*')
-            .eq('code', cleanCode)
-            .single();
+        // --- STEP 1: DEFINE BACKEND URL ---
+        const BACKEND_URL = window.location.hostname === "localhost" 
+            ? "http://localhost:3000" 
+            : "https://monika-ai-mjox.vercel.app"; 
 
-        // 1. Database Error or Code Not Found
-        if (fetchError || !codeData) {
-            setError("ACCESS_DENIED: INVALID_KEY");
+        // --- STEP 2: CALL BACKEND ---
+        const res = await fetch(`${BACKEND_URL}/redeem`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                code: cleanCode, 
+                userId: userId 
+            })
+        });
+
+        const data = await res.json();
+
+        // --- STEP 3: HANDLE ERRORS ---
+        if (!data.success) {
+            // Map backend errors to the Matrix UI style
+            if (data.error === "Invalid code.") {
+                setError("ACCESS_DENIED: INVALID_KEY");
+            } else if (data.error === "Code fully used.") {
+                setError("ACCESS_DENIED: KEY_EXPIRED (GLOBAL LIMIT REACHED)");
+            } else {
+                setError(`SYSTEM_ERROR: ${data.error || "UNKNOWN"}`.toUpperCase());
+            }
             setLoading(false);
             return;
         }
 
-        // 2. Check if Expired (Global Limit)
-        if (codeData.used_count >= codeData.max_uses) {
-            setError("ACCESS_DENIED: KEY_EXPIRED (GLOBAL LIMIT REACHED)");
-            setLoading(false);
-            return;
-        }
-
-        // --- STEP 2: INCREMENT THE COUNTER ---
-        const { error: updateError } = await supabase
-            .from('access_codes')
-            .update({ used_count: codeData.used_count + 1 })
-            .eq('id', codeData.id);
-
-        if (updateError) {
-            setError("SYSTEM_ERROR: UNABLE_TO_VERIFY");
-            setLoading(false);
-            return;
-        }
-
-        // --- STEP 3: SUCCESS ---
+        // --- STEP 4: SUCCESS ---
         setEntered(true);
         localStorage.setItem("monika_access_granted", "true");
 
