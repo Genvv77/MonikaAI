@@ -11,6 +11,8 @@
   "author": "Satyam Shorrf <contact@satyamshorrf@yahoo.com>",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.89.0",
+    "@vercel/kv": "^3.0.0",
     "axios": "^1.8.4",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
