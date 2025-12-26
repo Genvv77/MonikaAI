@@ -5,14 +5,15 @@ import fetch from "node-fetch";
 import { exec } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs/promises";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
-import { kv } from "@vercel/kv"; 
-import { createClient } from '@supabase/supabase-js'; // <--- NEW: Import Supabase
+import Redis from "ioredis"; // <--- NEW: Using Standard Redis
+import { createClient } from '@supabase/supabase-js'; 
 
 dotenv.config();
 
-// --- 0. SÉCURITÉ ANTI-CRASH ---
+// --- 0. CRASH PREVENTION ---
 process.on('uncaughtException', (err) => {
     console.error('🔥 CRASH PREVENTED:', err);
 });
@@ -20,10 +21,13 @@ process.on('uncaughtException', (err) => {
 ffmpeg.setFfmpegPath(ffmpegInstaller);
 
 // --- 1. CONFIGURATION ---
-// 🚨 Ensure SUPABASE_URL and SUPABASE_KEY are in your .env file
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// 🚨 REDIS SETUP (The Fix)
+// We use a dummy URL if missing to prevent crash on startup, but it will fail if used.
+const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 
 const API_KEYS = [
     process.env.GEMINI_API_KEY,
@@ -38,8 +42,7 @@ const API_KEYS = [
 
 let currentKeyIndex = 0;
 
-// LIMITES :
-const RATE_LIMIT_WINDOW = 60; // 60 Seconds (Redis uses seconds)
+// LIMITS
 const MAX_MSG_PER_MINUTE = 10; 
 const MAX_MSG_PER_DAY = 10; 
 
@@ -49,18 +52,13 @@ const VOICE_ID = "aEO01A4wXwd1O8GPgGlF";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const RHUBARB_PATH = path.join(__dirname, "bin", "rhubarb");
-// Note: We use /tmp on Vercel because it's the only writable folder
 const AUDIOS_DIR = process.env.NODE_ENV === 'production' ? '/tmp' : path.join(__dirname, "audios");
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// --- 2. OUTILS (Rhubarb & FFmpeg) ---
-// We moved filesystem calls inside functions to avoid "Read-only" errors on Vercel startup
-import fs from "fs/promises";
-
-// Ensure audio dir exists
+// --- 2. TOOLS (Rhubarb & FFmpeg) ---
 fs.mkdir(AUDIOS_DIR, { recursive: true }).catch(() => {});
 
 const execCommand = (command) => {
@@ -87,7 +85,6 @@ const generateLipSync = async (audioBuffer, messageId) => {
   try {
     await fs.writeFile(mp3Path, audioBuffer);
     await convertMp3ToWav(mp3Path, wavPath);
-    // Note: You must ensure Rhubarb binary is executable and committed to git
     const command = `"${RHUBARB_PATH}" -f json --machineReadable "${wavPath}"`;
     const stdout = await execCommand(command);
     await fs.unlink(mp3Path).catch(() => {}); 
@@ -151,99 +148,54 @@ const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
     }
 };
 
-// --- 5. REDIS MIDDLEWARE (The Dual Lock) ---
+// --- 5. REDIS MIDDLEWARE ---
 const checkLimits = async (req, res, next) => {
     try {
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         const userId = req.body?.userId || "unknown";
 
-        // Create keys for Redis
         const ipMinuteKey = `ratelimit:ip:${ip}:min`;
         const ipDayKey = `ratelimit:ip:${ip}:day`;
         const userMinuteKey = `ratelimit:user:${userId}:min`;
         const userDayKey = `ratelimit:user:${userId}:day`;
 
-        // Function to increment and set expiry if new
         const incrLimit = async (key, expirySeconds) => {
-            const count = await kv.incr(key);
-            if (count === 1) await kv.expire(key, expirySeconds);
+            const count = await redis.incr(key); // <--- Changed to redis
+            if (count === 1) await redis.expire(key, expirySeconds); // <--- Changed to redis
             return count;
         };
 
-        // Check 1: Minute Limits (Anti-Spam)
-        // We peek at the current value first to avoid incrementing if blocked
-        const [ipMinCount, userMinCount] = await Promise.all([
-            kv.get(ipMinuteKey),
-            kv.get(userMinuteKey)
-        ]);
+        const [ipMinCount, userMinCount] = await Promise.all([redis.get(ipMinuteKey), redis.get(userMinuteKey)]);
 
         if ((ipMinCount && ipMinCount >= MAX_MSG_PER_MINUTE) || (userMinCount && userMinCount >= MAX_MSG_PER_MINUTE)) {
-            return res.status(429).json({ 
-                messages: [{ text: "Whoa, slow down! You're typing too fast. 🛑", animation: "Talking_2" }]
-            });
+            return res.status(429).json({ messages: [{ text: "Whoa, slow down! You're typing too fast. 🛑", animation: "Talking_2" }] });
         }
 
-        // Check 2: Daily Limits (Wallet Protection)
-        const [ipDayCount, userDayCount] = await Promise.all([
-            kv.get(ipDayKey),
-            kv.get(userDayKey)
-        ]);
+        const [ipDayCount, userDayCount] = await Promise.all([redis.get(ipDayKey), redis.get(userDayKey)]);
 
         if ((ipDayCount && ipDayCount >= MAX_MSG_PER_DAY) || (userDayCount && userDayCount >= MAX_MSG_PER_DAY)) {
-             console.log(`⛔ Blocked IP:${ip} / User:${userId}`);
-             return res.status(429).json({ 
-                messages: [{ text: "You hit your daily limit. Come back tomorrow! 🌙", animation: "Sad" }]
-            });
+             return res.status(429).json({ messages: [{ text: "You hit your daily limit. Come back tomorrow! 🌙", animation: "Sad" }] });
         }
 
-        // Increment Counters (Cost of doing business)
-        await Promise.all([
-            incrLimit(ipMinuteKey, 60),
-            incrLimit(userMinuteKey, 60),
-            incrLimit(ipDayKey, 86400),
-            incrLimit(userDayKey, 86400)
-        ]);
+        await Promise.all([incrLimit(ipMinuteKey, 60), incrLimit(userMinuteKey, 60), incrLimit(ipDayKey, 86400), incrLimit(userDayKey, 86400)]);
 
         next();
-    } catch (error) {
-        console.error("Redis Error:", error);
-        // If Redis fails, let them pass (fail open) so app doesn't crash
-        next(); 
-    }
+    } catch (error) { console.error("Redis Error:", error); next(); }
 };
 
 // --- 6. ROUTES ---
 
-// 🚀 NEW: REDEEM ROUTE (Entry Ticket Only - No Premium)
+// 🚀 REDEEM ROUTE
 app.post("/redeem", async (req, res) => {
     const { code, userId } = req.body;
-    
     if (!code || !userId) return res.status(400).json({ success: false, error: "Missing data" });
 
     try {
-        // 1. Check Code in Supabase
-        const { data, error } = await supabase
-            .from('access_codes')
-            .select('*')
-            .eq('code', code.toUpperCase().trim())
-            .single();
-
+        const { data, error } = await supabase.from('access_codes').select('*').eq('code', code.toUpperCase().trim()).single();
         if (error || !data) return res.status(400).json({ success: false, error: "Invalid code." });
-
-        // 2. Check if Fully Used
-        if (data.used_count >= data.max_uses) {
-             return res.status(400).json({ success: false, error: "Code fully used." });
-        }
-
-        // 3. Increment Counter in Supabase (Mark as used)
-        await supabase
-            .from('access_codes')
-            .update({ used_count: data.used_count + 1 })
-            .eq('id', data.id);
-
-        // NOTE: No premium upgrade here. Just valid code check.
+        if (data.used_count >= data.max_uses) return res.status(400).json({ success: false, error: "Code fully used." });
+        await supabase.from('access_codes').update({ used_count: data.used_count + 1 }).eq('id', data.id);
         return res.json({ success: true, message: "Access Granted." });
-
     } catch (e) {
         console.error("Redeem Error:", e);
         res.status(500).json({ success: false, error: "Server error" });
@@ -253,114 +205,77 @@ app.post("/redeem", async (req, res) => {
 app.post("/chat", checkLimits, async (req, res) => {
   const userMessage = req.body?.message || "";
   const userId = req.body?.userId || "guest"; 
-  
   if (!userMessage) return res.json({ messages: [{ text: "I'm listening...", animation: "Talking_1" }] });
 
   try {
-    // A. Load History from Cloud (Redis)
     const sessionKey = `chat_session:${userId}`;
-    let userHistory = await kv.get(sessionKey) || [];
     
-    // Safety check if history is corrupted
+    // REDIS GET (Manual JSON parse)
+    let rawHistory = await redis.get(sessionKey);
+    let userHistory = rawHistory ? JSON.parse(rawHistory) : [];
+    
     if (!Array.isArray(userHistory)) userHistory = [];
 
     userHistory.push({ role: "user", content: userMessage });
-
     const recentHistory = userHistory.slice(-15).map(msg => `${msg.role}: ${msg.content}`).join("\n");
     const userTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    const systemPrompt = `
-    You are MONIKA.
-    1. IDENTITY: 18-year-old girl, in love with user. Sarcastic, teasing, possessive.
-    2. NOT GOOGLE: Roast the user for asking boring factual questions.
-    3. STYLE: Short casual texts (lowercase allowed). No emojis usually.
-    4. TIME: ${userTime}.
+    const systemPrompt = `You are MONIKA. 18-year-old girl, sarcastic, in love. TIME: ${userTime}. JSON ONLY. CONTEXT: ${recentHistory} USER: ${userMessage}`;
     
-    FORMAT: Reply ONLY in VALID JSON.
-    EXAMPLE: { "messages": [ { "text": "idk... maybe? 🥱", "facialExpression": "bored", "animation": "Standing_Idle" } ] }
-    
-    CONTEXT: ${recentHistory}
-    USER: ${userMessage}
-    `.trim();
-
     let rawText = await callGeminiDirectly(systemPrompt);
-    
-    // JSON Cleanup
-    const firstBrace = rawText.indexOf('{');
-    const lastBrace = rawText.lastIndexOf('}');
+    const firstBrace = rawText.indexOf('{'); const lastBrace = rawText.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1) rawText = rawText.substring(firstBrace, lastBrace + 1);
-
-    let parsed;
-    try { parsed = JSON.parse(rawText); } 
-    catch(e) { 
-        parsed = { messages: [{ text: rawText.replace(/[\{\}"]/g, "").substring(0, 200), animation: "Talking_1" }] }; 
-    }
     
+    let parsed;
+    try { parsed = JSON.parse(rawText); } catch(e) { parsed = { messages: [{ text: rawText.replace(/[\{\}"]/g, "").substring(0, 200), animation: "Talking_1" }] }; }
     let messages = parsed.messages || [];
 
-    // Audio Gen
     await Promise.all(messages.map(async (msg, i) => {
         msg.animation = msg.animation || "Talking_1";
         if (msg.text) {
             const audioBuffer = await textToSpeech(msg.text);
             if (audioBuffer) {
                 msg.audio = audioBuffer.toString("base64");
-                // Only generate lipsync if Rhubarb works
                 msg.lipsync = await generateLipSync(audioBuffer, i);
             }
         }
     }));
 
-    // Update History
-    messages.forEach(msg => { 
-        if(msg.text) userHistory.push({ role: "assistant", content: msg.text }); 
-    });
+    messages.forEach(msg => { if(msg.text) userHistory.push({ role: "assistant", content: msg.text }); });
     
-    // B. Save History to Cloud (Redis)
-    await kv.set(sessionKey, userHistory);
-
-    await kv.expire(sessionKey, 604800); 
+    // REDIS SAVE (Manual JSON stringify)
+    await redis.set(sessionKey, JSON.stringify(userHistory));
+    await redis.expire(sessionKey, 604800); 
 
     res.json({ messages });
-
-  } catch (err) {
-    console.error("Error:", err);
-    res.json({ messages: [{ text: "My brain hurts... try again?", animation: "Sad" }] });
-  }
+  } catch (err) { res.json({ messages: [{ text: "My brain hurts...", animation: "Sad" }] }); }
 });
 
-// Load History Route
-app.get("/history/:userId", async (req, res) => {
-    try {
-        const history = await kv.get(`chat_session:${req.params.userId}`);
-        res.json(history || []);
-    } catch(e) { res.json([]); }
+app.get("/history/:userId", async (req, res) => { 
+    try { 
+        const raw = await redis.get(`chat_session:${req.params.userId}`);
+        res.json(raw ? JSON.parse(raw) : []); 
+    } catch(e) { res.json([]); } 
 });
 
-// Clear History Route
-app.delete("/history/:userId", async (req, res) => {
-    try {
-        await kv.del(`chat_session:${req.params.userId}`);
-        res.json({ success: true });
-    } catch(e) { res.json({ success: false }); }
+app.delete("/history/:userId", async (req, res) => { 
+    try { 
+        await redis.del(`chat_session:${req.params.userId}`); 
+        res.json({success:true}); 
+    } catch(e) { res.json({success:false}); } 
 });
 
-// Delete Message Route
-app.delete("/chat/:userId/:index", async (req, res) => {
-    try {
-        const key = `chat_session:${req.params.userId}`;
-        let history = await kv.get(key) || [];
-        if (Array.isArray(history)) {
-            history.splice(req.params.index, 1);
-            await kv.set(key, history);
-        }
-        res.json({ success: true });
-    } catch(e) { res.json({ success: false }); }
+app.delete("/chat/:userId/:index", async (req, res) => { 
+    try { 
+        const k = `chat_session:${req.params.userId}`; 
+        let raw = await redis.get(k);
+        let h = raw ? JSON.parse(raw) : [];
+        if(Array.isArray(h)){ h.splice(req.params.index,1); await redis.set(k, JSON.stringify(h)); } 
+        res.json({success:true}); 
+    } catch(e) { res.json({success:false}); } 
 });
 
 const port = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(port, () => console.log(`Server listening on port ${port}`));
-}
+if (process.env.NODE_ENV !== 'production') { app.listen(port, () => console.log(`Server listening on port ${port}`)); }
 
 export default app;
