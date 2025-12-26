@@ -27,7 +27,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // 🚨 REDIS SETUP (The Fix)
 // We use a dummy URL if missing to prevent crash on startup, but it will fail if used.
-const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+const redis = new Redis(process.env.REDIS_URL || "redis://default:GD4yS9MjVpv5cJQEcwwcplLTlgwld75L@redis-10317.crce218.eu-central-1-1.ec2.cloud.redislabs.com:10317");
 
 const API_KEYS = [
     process.env.GEMINI_API_KEY,
