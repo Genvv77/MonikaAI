@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
-import Redis from "ioredis"; // ✅ Using Standard Redis
+import Redis from "ioredis"; 
 import { createClient } from '@supabase/supabase-js'; 
 
 dotenv.config();
@@ -25,24 +25,22 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// 🚨 ROBUST REDIS SETUP (The Fix) 🚨
-// This logic fixes the "hanging" issue by forcing Secure Mode and IPv4
-let redisUrl = process.env.REDIS_URL || "rediss://default:GD4yS9MjVpv5cJQEcwwcplLTlgwld75L@redis-10317.crce218.eu-central-1-1.ec2.cloud.redislabs.com:10317";
-
-// 1. Force Secure Protocol (Auto-correct redis:// to rediss://)
-if (redisUrl && redisUrl.startsWith("redis://")) {
-    console.log("🔒 Auto-switching Redis to Secure Mode (rediss://)");
-    redisUrl = redisUrl.replace("redis://", "rediss://");
-}
+// 🚨 REDIS SETUP (The Correct Fix) 🚨
+// We use process.env.REDIS_URL. 
+// If it's missing, we default to the one you had, but with 'redis://' (Not rediss)
+const defaultRedis = "redis://default:GD4yS9MjVpv5cJQEcwwcplLTlgwld75L@redis-10317.crce218.eu-central-1-1.ec2.cloud.redislabs.com:10317";
+const redisUrl = process.env.REDIS_URL || defaultRedis;
 
 const redis = new Redis(redisUrl, {
-    // 2. Vercel Network Fixes
-    family: 0,           // Force dual-stack lookup (Fixes ENOTFOUND on Vercel)
-    tls: {
-        rejectUnauthorized: false // Allow connection even if certs are strict
-    },
-    connectTimeout: 10000, // Fail after 10s instead of hanging forever
+    // 1. NETWORK FIX: This prevents the "Hanging" on Vercel
+    family: 0,           
+    
+    // 2. TIMEOUT FIX: Fail fast if something is wrong
+    connectTimeout: 10000, 
     maxRetriesPerRequest: 3
+    
+    // NOTE: We REMOVED 'tls' and 'rediss://' enforcement 
+    // because your database clearly does not support it.
 });
 
 redis.on("connect", () => console.log("✅ REDIS CONNECTED SUCCESSFULLY"));
