@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
-import Redis from "ioredis"; // <--- NEW: Using Standard Redis
+import Redis from "ioredis"; // ✅ Using Standard Redis
 import { createClient } from '@supabase/supabase-js'; 
 
 dotenv.config();
@@ -25,9 +25,28 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// 🚨 REDIS SETUP (The Fix)
-// We use a dummy URL if missing to prevent crash on startup, but it will fail if used.
-const redis = new Redis(process.env.REDIS_URL || "rediss://default:GD4yS9MjVpv5cJQEcwwcplLTlgwld75L@redis-10317.crce218.eu-central-1-1.ec2.cloud.redislabs.com:10317");
+// 🚨 ROBUST REDIS SETUP (The Fix) 🚨
+// This logic fixes the "hanging" issue by forcing Secure Mode and IPv4
+let redisUrl = process.env.REDIS_URL || "rediss://default:GD4yS9MjVpv5cJQEcwwcplLTlgwld75L@redis-10317.crce218.eu-central-1-1.ec2.cloud.redislabs.com:10317";
+
+// 1. Force Secure Protocol (Auto-correct redis:// to rediss://)
+if (redisUrl && redisUrl.startsWith("redis://")) {
+    console.log("🔒 Auto-switching Redis to Secure Mode (rediss://)");
+    redisUrl = redisUrl.replace("redis://", "rediss://");
+}
+
+const redis = new Redis(redisUrl, {
+    // 2. Vercel Network Fixes
+    family: 0,           // Force dual-stack lookup (Fixes ENOTFOUND on Vercel)
+    tls: {
+        rejectUnauthorized: false // Allow connection even if certs are strict
+    },
+    connectTimeout: 10000, // Fail after 10s instead of hanging forever
+    maxRetriesPerRequest: 3
+});
+
+redis.on("connect", () => console.log("✅ REDIS CONNECTED SUCCESSFULLY"));
+redis.on("error", (err) => console.error("❌ REDIS CONNECTION ERROR:", err));
 
 const API_KEYS = [
     process.env.GEMINI_API_KEY,
@@ -160,8 +179,8 @@ const checkLimits = async (req, res, next) => {
         const userDayKey = `ratelimit:user:${userId}:day`;
 
         const incrLimit = async (key, expirySeconds) => {
-            const count = await redis.incr(key); // <--- Changed to redis
-            if (count === 1) await redis.expire(key, expirySeconds); // <--- Changed to redis
+            const count = await redis.incr(key); 
+            if (count === 1) await redis.expire(key, expirySeconds);
             return count;
         };
 
@@ -220,8 +239,20 @@ app.post("/chat", checkLimits, async (req, res) => {
     const recentHistory = userHistory.slice(-15).map(msg => `${msg.role}: ${msg.content}`).join("\n");
     const userTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    const systemPrompt = `You are MONIKA. 18-year-old girl, sarcastic, in love. TIME: ${userTime}. JSON ONLY. CONTEXT: ${recentHistory} USER: ${userMessage}`;
+    const systemPrompt = `
+    You are MONIKA.
+    1. IDENTITY: 18-year-old girl, in love with user. Sarcastic, teasing, possessive.
+    2. NOT GOOGLE: Roast the user for asking boring factual questions.
+    3. STYLE: Short casual texts (lowercase allowed). No emojis usually.
+    4. TIME: ${userTime}.
     
+    FORMAT: Reply ONLY in VALID JSON.
+    EXAMPLE: { "messages": [ { "text": "idk... maybe? 🥱", "facialExpression": "bored", "animation": "Standing_Idle" } ] }
+    
+    CONTEXT: ${recentHistory}
+    USER: ${userMessage}
+    `.trim();
+
     let rawText = await callGeminiDirectly(systemPrompt);
     const firstBrace = rawText.indexOf('{'); const lastBrace = rawText.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1) rawText = rawText.substring(firstBrace, lastBrace + 1);
