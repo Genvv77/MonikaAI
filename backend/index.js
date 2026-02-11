@@ -17,8 +17,8 @@ const ALLOWED_ORIGINS = [
     'http://localhost:5173', // Your local React dev server
     'http://localhost:3000',
     'http://monika-ai-cve5.vercel.app',
-    'monikaai-production.up.railway.app',
-    'http://monika-ai.xyz'
+    'https://monikaai-production.up.railway.app',
+    'https://monika-ai.xyz'
 ];
 
 app.use(cors({
@@ -250,7 +250,7 @@ app.post('/redeem', async (req, res) => {
             .single();
 
         if (error || !codes) {
-            console.log(`❌ INVALID CODE: ${code}`);
+            console.log(`INVALID CODE: ${code}`);
             return res.json({ success: false, error: "Invalid code." });
         }
 
@@ -275,7 +275,7 @@ app.post('/redeem', async (req, res) => {
         }
 
         // 5. SUCCESS
-        console.log(`✅ ACCESS GRANTED: ${code}`);
+        console.log(`ACCESS GRANTED: ${code}`);
         return res.json({ success: true });
 
     } catch (e) {
