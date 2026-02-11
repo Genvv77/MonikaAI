@@ -21,17 +21,10 @@ const ALLOWED_ORIGINS = [
     'https://monika-ai.xyz'
 ];
 
+// --- SECURE CORS CONFIGURATION
 app.use(cors({
-    origin: function (origin, callback) {
-        // Allow requests with no origin 
-        // ONLY if you want to allow local testing. Otherwise, reject them.
-        if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('Blocked by CORS policy'));
-        }
-    },
-    methods: ['GET', 'POST']
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE']
 }));
 
 app.use(express.json());

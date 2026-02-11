@@ -1,6 +1,6 @@
-# Virtual Girlfriend Frontend
+# Monika GF Mode Frontend
 
-This is the frontend service for the Virtual Girlfriend application. It provides a user interface for interacting with the virtual avatar, supporting real-time chat, audio playback, and lip-sync animations.
+This is the frontend service for the Monika Virtual Girlfriend application. It provides a user interface for interacting with the virtual avatar, supporting real-time chat, audio playback, and lip-sync animations.
 
 ## Features
 
