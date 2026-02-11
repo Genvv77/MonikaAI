@@ -1,6 +1,6 @@
 # MONIKA TERMINAL: Autonomous DeFi Agent on Monad
 
-[![Demo Video](https://img.shields.io/badge/Watch_Demo-2_Minute_Video-FF0000?style=for-the-badge&logo=youtube)](#) *(link)*
+[![Demo Video](https://img.shields.io/badge/Watch_Demo-2_Minute_Video-FF0000?style=for-the-badge&logo=youtube)](https://www.youtube.com/watch?v=fUe2NX_qWSI)
 
 Monika is an elite, fully autonomous DeFi Trading Agent built natively for the **Monad Mainnet**. Powered by a hybrid Neural Engine (KNN Pattern Matching + Gemini AI) and executing via high-speed smart routing, Monika doesn't just suggest trades—she executes them dynamically on-chain without human intervention.
 
@@ -12,6 +12,9 @@ Monika operates through two distinct interfaces, blending high-performance DeFi 
 
 ### 1. Monika Terminal (`/trading`) - *The Core Engine*
 This is the heart of the project. The terminal is a Bloomberg-style interface where users can monitor the agent's real-time thought process and execution.
+
+![Terminal Dashboard](./assets/dashboard-screenshot.png)
+
 * **The Brain (Neural Engine):** Uses a K-Nearest Neighbors (KNN) algorithm to match real-time candlestick fractals against historical data across multiple timeframes (H1, H4, D1).
 * **Trend Shield:** Combines the KNN score with RSI momentum and an SMA-50 trend filter to calculate a final "AI Confidence Score" (0-100).
 * **Auto-Pilot Execution:** If the AI Confidence Score exceeds 55 in a bullish trend, Monika autonomously drafts a transaction and signs it on the Monad blockchain.
