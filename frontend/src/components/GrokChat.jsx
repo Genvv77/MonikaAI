@@ -29,7 +29,7 @@ const GrokChat = ({ marketStats, selectedSymbol, wallet, neuralAnalysis, rsiValu
     // --- SECURE BACKEND CALL ---
     const fetchAIResponse = async (query, contextData) => {
         try {
-            const response = await fetch(BACKEND_URL, {
+            const response = await fetch(`${BASE_URL}/api/chat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query, context: contextData })
