@@ -2,11 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI } from '@google/generative-ai'; // <--- NEW IMPORT
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
+
+// --- SUPABASE INIT ---
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 // SECURE CORS CONFIGURATION
 const ALLOWED_ORIGINS = [
@@ -230,6 +234,54 @@ async function runScanner() {
     // Run again in 1.5 seconds (Much faster refresh)
     setTimeout(runScanner, 1500);
 }
+
+// --- SUPABASE ENTRY PROTOCOL ---
+app.post('/redeem', async (req, res) => {
+    try {
+        const { code, userId } = req.body;
+        console.log(`🔑 REDEEM ATTEMPT: ${code} by ${userId}`);
+
+        // 1. QUERY CODE
+        const { data: codes, error } = await supabase
+            .from('access_codes')
+            .select('*')
+            .eq('code', code)
+            .single();
+
+        if (error || !codes) {
+            console.log(`❌ INVALID CODE: ${code}`);
+            return res.json({ success: false, error: "Invalid code." });
+        }
+
+        // 2. CHECK STATUS
+        if (codes.status !== 'active') {
+            return res.json({ success: false, error: "Code inactive." });
+        }
+
+        // 3. CHECK USAGE LIMIT
+        if (codes.uses_remaining <= 0) {
+            return res.json({ success: false, error: "Code fully used." });
+        }
+
+        // 4. UPDATE USAGE (If not unlimited -999)
+        if (codes.uses_remaining !== -999) {
+            const { error: updateError } = await supabase
+                .from('access_codes')
+                .update({ uses_remaining: codes.uses_remaining - 1 })
+                .eq('id', codes.id);
+
+            if (updateError) console.error("Update Error", updateError);
+        }
+
+        // 5. SUCCESS
+        console.log(`✅ ACCESS GRANTED: ${code}`);
+        return res.json({ success: true });
+
+    } catch (e) {
+        console.error("Redeem Error:", e);
+        res.status(500).json({ success: false, error: "Server Error" });
+    }
+});
 
 // --- AI CHAT ROUTE ---
 app.post('/api/chat', async (req, res) => {
