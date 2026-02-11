@@ -1,0 +1,14 @@
+{
+    "crons": [
+        {
+            "path": "/api/trade-tick",
+            "schedule": "* * * * *"
+        }
+    ],
+    "rewrites": [
+        {
+            "source": "/(.*)",
+            "destination": "/"
+        }
+    ]
+}

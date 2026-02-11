@@ -1,220 +1,103 @@
-# Avatar Chatbot Setup
+# MONIKA TERMINAL: Autonomous DeFi Agent on Monad
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Virtual Girlfriend Frontend](#virtual-girlfriend-frontend)
-   - [Features](#features)
-   - [Prerequisites](#prerequisites)
-   - [Installation](#installation)
-   - [Usage](#usage)
-   - [Available Scripts](#available-scripts)
-3. [Virtual Girlfriend Backend](#virtual-girlfriend-backend)
-   - [Features](#features-1)
-   - [Prerequisites](#prerequisites-1)
-   - [Installation](#installation-1)
-   - [Usage](#usage-1)
-   - [API Endpoints](#api-endpoints)
-   - [Development](#development)
-4. [References](#references)
-5. [License](#license)
+[![Demo Video](https://img.shields.io/badge/Watch_Demo-2_Minute_Video-FF0000?style=for-the-badge&logo=youtube)](#) *(link)*
 
-## Overview
-
-Experience the future of companionship with an AI-powered 3D virtual chatbot. Engage in lifelike conversations, enjoy emotional interactions, and immerse yourself in a hyper-realistic experience. With stunning visuals, adaptive intelligence, and a natural voice, your virtual companion is just a chat away! 💕
-
-## Virtual Girlfriend Frontend
-![Screenshot 2025-03-30 204238](https://github.com/user-attachments/assets/f055df15-a9d2-4ab8-9cd5-c773b6125cce)
-
-This is the frontend service for the Virtual Girlfriend application. It provides a user interface for interacting with the virtual avatar, supporting real-time chat, audio playback, and lip-sync animations.
-
-### Features
-
-- **Chat Interface**: Allows users to send and receive messages.
-- **Audio Playback**: Plays generated speech from the backend.
-- **Lip-Syncing**: Displays avatar animations based on audio responses.
-- **Facial Expressions and Animations**: Enhances interactivity with dynamic visuals.
-
-### Prerequisites
-
-- Node.js (v16 or higher)
-- React.js (latest version)
-- A running instance of the Virtual Girlfriend backend
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/satyamshorrf/virtual-girlfriend.git
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Create a `.env` file in the frontend directory and add the backend API URL:
-   ```env
-   REACT_APP_BACKEND_URL=http://localhost:3000
-   ```
-
-### Usage
-
-#### Start the frontend server:
-   ```bash
-   npm start
-   ```
-The frontend will run on `http://localhost:5173` (or another port if specified).
-
-### Available Scripts
-
-#### `npm start`
-Runs the app in development mode.
-
-#### `npm run build`
-Builds the app for production.
-
-#### `npm test`
-Runs the test suite.
-
-## Virtual Girlfriend Backend
-![Screenshot 2025-03-30 170652](https://github.com/user-attachments/assets/78fb1a1a-7da4-49af-9ba8-c847317b3db9)
-
-This is the backend service for the Virtual Girlfriend application. It handles chat interactions, audio generation, and lip-syncing for the virtual avatar.
-
-### Features
-
-- **Chat Integration**: Uses OpenAI's GPT-3.5-turbo for generating conversational responses.
-- **Text-to-Speech**: Converts text responses into audio using the ElevenLabs API.
-- **Lip-Syncing**: Generates lip-sync data for the avatar using Rhubarb Lip Sync.
-- **Facial Expressions and Animations**: Supports dynamic facial expressions and animations for the avatar.
-
-### Prerequisites
-
-- Node.js (v16 or higher)
-- API keys for:
-  - OpenAI
-  - ElevenLabs
-- Ensure `ffmpeg` and `rhubarb` are installed and available in your system's PATH.
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/satyamshorrf/virtual-girlfriend.git
-   cd backend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Create a `.env` file in the backend directory and add the following:
-   ```env
-   OPENAI_API_KEY=your_openai_api_key
-   ELEVEN_LABS_API_KEY=your_elevenlabs_api_key
-   ```
-
-### Usage
-
-#### Start the backend server:
-   ```bash
-   npm run dev
-   ```
-The server will run on `http://localhost:3000`.
-
-### API Endpoints
-
-#### `GET /`
-Returns a simple "Hello World!" message.
-
-#### `GET /voices`
-Fetches available voices from the ElevenLabs API.
-
-#### `POST /chat`
-Handles chat requests. Accepts a JSON payload:
-```json
-{
-  "message": "Hello!",
-  "user_id": "12345"
-}
-```
-Returns a JSON response with text, audio, lip-sync data, facial expressions, and animations.
-
-### Development
-Use `nodemon` for hot-reloading during development:
-   ```bash
-   npm install -g nodemon
-   nodemon index.js
-   ```
-
-## References
-- [Ready Player Me](https://readyplayer.me/)
-- [Virtual Girlfriend GitHub](https://github.com/satyamshorrf/virtual-girlfriend.git)
-- [gltfjsx](https://github.com/pmndrs/gltfjsx)
-- [Rhubarb Lip Sync](https://github.com/DanielSWolf/rhubarb-lip-sync)
-
-## License
-This project is licensed under the MIT License.
+Monika is an elite, fully autonomous DeFi Trading Agent built natively for the **Monad Mainnet**. Powered by a hybrid Neural Engine (KNN Pattern Matching + Gemini AI) and executing via high-speed smart routing, Monika doesn't just suggest trades—she executes them dynamically on-chain without human intervention.
 
 ---
 
-# Contributing to Virtual Girlfriend
+## Project Overview
 
-Thank you for considering contributing to this project! We welcome contributions from everyone. Please follow the guidelines below to ensure smooth collaboration.
+Monika operates through two distinct interfaces, blending high-performance DeFi execution with an immersive AI personality.
 
-## How to Contribute
+### 1. Monika Terminal (`/trading`) - *The Core Engine*
+This is the heart of the project. The terminal is a Bloomberg-style interface where users can monitor the agent's real-time thought process and execution.
+* **The Brain (Neural Engine):** Uses a K-Nearest Neighbors (KNN) algorithm to match real-time candlestick fractals against historical data across multiple timeframes (H1, H4, D1).
+* **Trend Shield:** Combines the KNN score with RSI momentum and an SMA-50 trend filter to calculate a final "AI Confidence Score" (0-100).
+* **Auto-Pilot Execution:** If the AI Confidence Score exceeds 55 in a bullish trend, Monika autonomously drafts a transaction and signs it on the Monad blockchain.
+* **Smart Routing:** Failsafe execution layer that automatically routes trades through PancakeSwap V3, Uniswap V3, or dynamic Multihop paths (via WMON/WETH) depending on liquidity.
 
-1. **Fork the Repository**: Click on the `Fork` button at the top-right corner of the repository page to create a copy of the repository in your GitHub account.
+### 2. GF Mode (`/`) - *The Immersive Persona*
+Before entering the hardcore trading terminal, users can interact with Monika in "GF Mode"—a fully rendered 3D interactive interface. This showcases the agent's personality, allowing users to converse with her using natural language (powered by Gemini/Gemma/ElevenLabs) before trusting her with their capital.
 
-2. **Clone Your Fork**: Clone your fork to your local machine using:
-   ```sh
-   git clone https://github.com/satyamshorrf/virtual-girlfriend.git
-   ```
+---
 
-3. **Create a Branch**: Create a new branch for your changes:
-   ```sh
-   git checkout -b feature-branch
-   ```
+## Monad Integration
 
-4. **Make Changes**: Implement your changes or improvements.
+Monika is inextricably linked to the Monad Mainnet. We chose Monad because an autonomous agent requires ultra-low latency and cheap gas to perform high-frequency fractal trading effectively. 
 
-5. **Commit Your Changes**: Write a clear commit message:
-   ```sh
-   git commit -m "Added feature XYZ"
-   ```
+**How we leverage Monad:**
+* **Real-Time On-Chain State:** Monika constantly polls Monad RPCs to check gas balances (`monGas`) and token holdings to prevent "dust" transaction failures.
+* **Complex Multi-DEX Routing:** Because liquidity on new chains can be fragmented, our `executeTrade` logic doesn't rely on one DEX. Monika natively constructs `solidityPacked` paths to execute:
+  1. Direct Swaps on **PancakeSwap V3** (`0x1b81D...`)
+  2. Fallback to **Uniswap V3 / SwapRouter02** (`0xfe31f...`)
+  3. **Smart Multihops**: Automatically finding paths via WMON or WETH if direct pairs lack liquidity.
+  4. **V2 Factory Fallbacks** for older liquidity pools.
 
-6. **Push to Your Fork**: Push the branch to your forked repository:
-   ```sh
-   git push origin feature-branch
-   ```
+### Supported Monad Contracts
+* **WMON:** `0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A`
+* **USDC:** `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`
+* **PancakeSwap V3 Router:** `0x1b81D678ffb9C0263b24A97847620C99d213eB14`
+* **Uniswap V3 Router:** `0xfe31f71c1b106eac32f1a19239c9a9a72ddfb900`
 
-7. **Submit a Pull Request**: Go to the original repository and open a Pull Request (PR) with a clear description of the changes you made.
+---
 
-## Code of Conduct
+## Architecture & Technology Stack
 
-- Be respectful to other contributors.
-- Follow the project's coding standards.
-- Keep commits and pull requests well-documented.
+**Frontend (Client-Side Wallet Security)**
+* **React.js & Vite:** High-performance terminal rendering.
+* **Ethers.js (v6):** Handles encrypted wallet storage (`Wallet.encrypt()`), transaction signing, and ABI contract interactions entirely client-side so private keys never touch the backend.
+* **TechnicalIndicators:** Local calculation of RSI and SMA.
 
-## Issues & Bug Reports
+**Backend (The Oracle)**
+* **Node.js & Express:** Lightweight server for fetching and caching market data.
+* **Google Generative AI (Gemini):** Powers the conversational agent (`/api/chat`) and allows the agent to explain her market structure logic in natural language.
+* **Smart Batching Engine:** Fetches 5m, 1h, and 1d candles in parallel to prevent API rate limits while keeping data live.
 
-If you find any bugs or issues, please open an issue in the repository and describe the problem clearly.
+---
 
-## Contributors
+## Setup & Deployment Instructions
 
-We appreciate all contributions! If you contribute, feel free to add your name below:
+### Prerequisites
+* Node.js (v18+)
+* A Google Gemini API Key
+* An ElevenLabs API Key
+* Monad Mainnet RPC access
+* An EVM wallet with at least 2 million $MONIKA, 1 USDC and 1 MON
 
-1. [**Satyam Kumar**](https://github.com/satyamshorrf)
-2. [**Rajesh Kumar**](https://github.com/sigmarajesh)
-3. [**Pratik Kumar**](https://github.com/Vicky7463)
-4. [**Sandeep Kumar**](https://github.com/sandeepkrpoddar)
-5. [**Kajal Kumari**](https://github.com/Kajall001)
-6. [**Kajal Kumari**](https://github.com/kajuarya)
+### 1. Backend Setup
+```bash
+cd backend
+npm install
 
+Create a .env file in the /backend directory:
 
-## License
+PORT=3000
+GEMINI_API_KEY=your_gemini_api_key_here
+ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 
-By contributing to this project, you agree that your contributions will be licensed under the project's existing license.
+Start the backend engine:
+npm run start
 
-Thank you for your contributions! 🚀
+Frontend Setup
+cd frontend
+npm install
 
---- 
+Start the Vite development server:
+npm run dev
 
+Usage
+Navigate to http://localhost:5173.
+Experience the 3D GF Mode or proceed directly to /trading.
+Create a burner wallet within the app (encrypted via password).
+Fund the wallet with a small amount of MON (for gas) and USDC on the Monad Mainnet.
+Click START ENGINE to enable Auto-Pilot, force buy to manually open a position, or use the GrokChat in the bottom right to ask Monika about current market conditions.
+
+⚖️ License & Attribution
+This project is open-sourced under the MIT License.
+
+Attributions:
+
+Data fetching architecture inspired by standard OHLCV aggregator patterns.
+3D rendering utilizes standard WebGL/Three.js libraries.
+Smart contract ABIs belong to their respective protocols (Uniswap Labs, PancakeSwap).

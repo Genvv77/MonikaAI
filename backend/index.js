@@ -1,310 +1,315 @@
-import cors from "cors";
-import dotenv from "dotenv";
-import express from "express";
-import fetch from "node-fetch";
-import { exec } from "child_process";
-import path from "path";
-import { fileURLToPath } from "url";
-import fs from "fs/promises";
-import ffmpeg from "fluent-ffmpeg";
-import ffmpegInstaller from "ffmpeg-static";
-import Redis from "ioredis"; 
-import { createClient } from '@supabase/supabase-js'; 
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
+import dotenv from 'dotenv';
+import { GoogleGenerativeAI } from '@google/generative-ai'; // <--- NEW IMPORT
 
 dotenv.config();
 
-// --- 0. CRASH PREVENTION ---
-process.on('uncaughtException', (err) => {
-    console.error('🔥 CRASH PREVENTED:', err);
-});
-
-ffmpeg.setFfmpegPath(ffmpegInstaller);
-
-// --- 1. CONFIGURATION ---
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-// 🚨 REDIS SETUP (The Correct Fix) 🚨
-// We use process.env.REDIS_URL. 
-// If it's missing, we default to the one you had, but with 'redis://' (Not rediss)
-const defaultRedis = "redis://default:GD4yS9MjVpv5cJQEcwwcplLTlgwld75L@redis-10317.crce218.eu-central-1-1.ec2.cloud.redislabs.com:10317";
-const redisUrl = process.env.REDIS_URL || defaultRedis;
-
-const redis = new Redis(redisUrl, {
-    // 1. NETWORK FIX: This prevents the "Hanging" on Vercel
-    family: 0,           
-    
-    // 2. TIMEOUT FIX: Fail fast if something is wrong
-    connectTimeout: 10000, 
-    maxRetriesPerRequest: 3
-    
-    // NOTE: We REMOVED 'tls' and 'rediss://' enforcement 
-    // because your database clearly does not support it.
-});
-
-redis.on("connect", () => console.log("✅ REDIS CONNECTED SUCCESSFULLY"));
-redis.on("error", (err) => console.error("❌ REDIS CONNECTION ERROR:", err));
-
-const API_KEYS = [
-    process.env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
-    process.env.GEMINI_API_KEY_6,
-    process.env.GEMINI_API_KEY_7,
-    process.env.GEMINI_API_KEY_8
-].filter(key => key && key.length > 5);
-
-let currentKeyIndex = 0;
-
-// LIMITS
-const MAX_MSG_PER_MINUTE = 10; 
-const MAX_MSG_PER_DAY = 10; 
-
-const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY;
-const VOICE_ID = "aEO01A4wXwd1O8GPgGlF"; 
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const RHUBARB_PATH = path.join(__dirname, "bin", "rhubarb");
-const AUDIOS_DIR = process.env.NODE_ENV === 'production' ? '/tmp' : path.join(__dirname, "audios");
-
 const app = express();
-app.use(express.json());
-app.use(cors());
 
-// --- 2. TOOLS (Rhubarb & FFmpeg) ---
-fs.mkdir(AUDIOS_DIR, { recursive: true }).catch(() => {});
+// SECURE CORS CONFIGURATION
+const ALLOWED_ORIGINS = [
+    'http://localhost:5173', // Your local React dev server
+    'http://localhost:3000',
+    'http://monika-ai-cve5.vercel.app', // ADD YOUR REAL VERCEL URL HERE
+    'http://monika-ai.xyz'
+];
 
-const execCommand = (command) => {
-  return new Promise((resolve, reject) => {
-    exec(command, (error, stdout, stderr) => {
-      if (error) { resolve("{}"); } else resolve(stdout);
-    });
-  });
-};
-
-const convertMp3ToWav = (inputPath, outputPath) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath).output(outputPath).format("wav").on("end", () => resolve()).on("error", (err) => reject(err)).run();
-  });
-};
-
-const generateLipSync = async (audioBuffer, messageId) => {
-  if (!audioBuffer) return null;
-  const timestamp = Date.now();
-  const mp3FileName = `temp_${messageId}_${timestamp}.mp3`;
-  const wavFileName = `temp_${messageId}_${timestamp}.wav`;
-  const mp3Path = path.join(AUDIOS_DIR, mp3FileName);
-  const wavPath = path.join(AUDIOS_DIR, wavFileName);
-  try {
-    await fs.writeFile(mp3Path, audioBuffer);
-    await convertMp3ToWav(mp3Path, wavPath);
-    const command = `"${RHUBARB_PATH}" -f json --machineReadable "${wavPath}"`;
-    const stdout = await execCommand(command);
-    await fs.unlink(mp3Path).catch(() => {}); 
-    await fs.unlink(wavPath).catch(() => {});
-    return JSON.parse(stdout); 
-  } catch (error) { return null; }
-};
-
-// --- 3. AUDIO (ElevenLabs) ---
-const textToSpeech = async (text) => {
-  if (!ELEVEN_LABS_API_KEY || ELEVEN_LABS_API_KEY.length < 10) return null;
-  try {
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128`, {
-        method: "POST", headers: { "Content-Type": "application/json", "xi-api-key": ELEVEN_LABS_API_KEY },
-        body: JSON.stringify({ text: text, model_id: "eleven_multilingual_v2", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
-    });
-    if (!response.ok) return null;
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
-  } catch (error) { return null; }
-};
-
-const getNextApiKey = () => {
-    if (API_KEYS.length === 0) return null;
-    currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
-    return API_KEYS[currentKeyIndex];
-};
-
-// --- 4. GOOGLE API (Gemma 3) ---
-const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
-    if (API_KEYS.length === 0) throw new Error("No API Keys");
-    if (retryCount >= API_KEYS.length * 2) throw new Error("Google Unavailable");
-
-    const apiKey = API_KEYS[currentKeyIndex];
-    const modelVersion = "gemma-3-27b-it"; 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelVersion}:generateContent?key=${apiKey}`;
-    
-    try {
-        const response = await fetch(url, {
-            method: "POST", 
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: systemPrompt }] }],
-                generationConfig: { temperature: 1.0, topP: 0.95, topK: 40 },
-                safetySettings: [ { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" } ]
-            })
-        });
-
-        if ([429, 503, 404].includes(response.status)) { 
-            getNextApiKey(); 
-            return callGeminiDirectly(systemPrompt, retryCount + 1); 
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin 
+        // ONLY if you want to allow local testing. Otherwise, reject them.
+        if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Blocked by CORS policy'));
         }
-        
-        if (!response.ok) throw new Error(`API Error: ${response.status}`);
-        
-        const data = await response.json();
-        return data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-    } catch (e) { 
-        getNextApiKey(); 
-        return callGeminiDirectly(systemPrompt, retryCount + 1); 
-    }
+    },
+    methods: ['GET', 'POST']
+}));
+
+app.use(express.json());
+const PORT = process.env.PORT || 3000;
+
+// --- AI CONFIGURATION ---
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY_9 || "");
+
+// --- ASSET CONFIGURATION ---
+const ASSET_MAP = {
+    'BTC-USD': 'BTC-USD',
+    'ETH-USD': 'ETH-USD',
+    'CAKE-USD': 'CAKE-USD',
+    'MON-USD': 'MON-USD',
+    'XAUT-USD': 'PAXG-USD'
 };
 
-// --- 5. REDIS MIDDLEWARE ---
-const checkLimits = async (req, res, next) => {
+const WATCHLIST = Object.keys(ASSET_MAP);
+let MARKET_CACHE = {};
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// --- HELPERS ---
+async function fetchCandles(symbol, granularityStr, limit = 300) {
     try {
-        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        const userId = req.body?.userId || "unknown";
+        const analysisSymbol = ASSET_MAP[symbol] || symbol;
+        const url = `https://api.coinbase.com/api/v3/brokerage/market/products/${analysisSymbol}/candles?granularity=${granularityStr}&limit=${limit}`;
+        const response = await axios.get(url);
+        if (!response.data.candles) return [];
+        return response.data.candles.map(c => ({
+            time: parseInt(c.start), open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close)
+        })).sort((a, b) => b.time - a.time);
+    } catch (e) { return []; }
+}
 
-        const ipMinuteKey = `ratelimit:ip:${ip}:min`;
-        const ipDayKey = `ratelimit:ip:${ip}:day`;
-        const userMinuteKey = `ratelimit:user:${userId}:min`;
-        const userDayKey = `ratelimit:user:${userId}:day`;
+function getPriceAtTime(candles, targetSecondsAgo) {
+    if (!candles || candles.length === 0) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const targetTime = now - targetSecondsAgo;
+    let closest = candles[0], minDiff = Infinity;
+    for (const c of candles) {
+        const diff = Math.abs(c.time - targetTime);
+        if (diff > minDiff && diff > 80000) break;
+        if (diff < minDiff) { minDiff = diff; closest = c; }
+    }
+    return closest.open;
+}
 
-        const incrLimit = async (key, expirySeconds) => {
-            const count = await redis.incr(key); 
-            if (count === 1) await redis.expire(key, expirySeconds);
-            return count;
+function calculateSMA(candles, period) {
+    if (candles.length < period) return null;
+    const slice = candles.slice(0, period);
+    return slice.reduce((acc, c) => acc + c.close, 0) / period;
+}
+
+function calculateRSI(candles, period = 14) {
+    if (candles.length < period + 1) return 50;
+    const closes = candles.map(c => c.close).reverse();
+    let gains = 0, losses = 0;
+    for (let i = 1; i <= period; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff >= 0) gains += diff; else losses -= diff;
+    }
+    let avgGain = gains / period, avgLoss = losses / period;
+    for (let i = period + 1; i < closes.length; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff >= 0) { avgGain = (avgGain * 13 + diff) / 14; avgLoss = (avgLoss * 13 + 0) / 14; }
+        else { avgGain = (avgGain * 13 + 0) / 14; avgLoss = (avgLoss * 13 - diff) / 14; }
+    }
+    return avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+}
+
+function analyzePattern(candles, lookaheadBars) {
+    if (!candles || candles.length < 50) return 50;
+    const currentPattern = [];
+    for (let i = 0; i < 5; i++) {
+        const c = candles[i];
+        currentPattern.push((c.close - c.open) / c.open);
+    }
+    let similarPatternsCount = 0, bullishOutcome = 0;
+    for (let i = 5; i < candles.length - lookaheadBars - 5; i++) {
+        let distance = 0;
+        for (let j = 0; j < 5; j++) distance += Math.pow(currentPattern[j] - ((candles[i + j].close - candles[i + j].open) / candles[i + j].open), 2);
+        if (distance < 0.0005) {
+            similarPatternsCount++;
+            if (candles[i - lookaheadBars]?.close > candles[i].close) bullishOutcome++;
+        }
+    }
+    return similarPatternsCount === 0 ? 50 : Math.min(Math.max((bullishOutcome / similarPatternsCount) * 100, 10), 90);
+}
+
+// --- ENGINE ---
+// --- OPTIMIZED ENGINE (SMART BATCHING) ---
+// Fetches timeframes in PARALLEL per coin, but staggers coins to avoid 429 Rate Limits
+async function runScanner() {
+    console.log("ANALYST ENGINE: Syncing assets (Smart Batching)...");
+
+    for (const symbol of WATCHLIST) {
+        try {
+            // 🚀 PARALLEL: Get 5m, 1h, 1d ALL AT ONCE for this symbol
+            // This cuts fetch time by 66% per coin
+            const [candlesShort, candlesLong, candlesMacro] = await Promise.all([
+                fetchCandles(symbol, 'FIVE_MINUTE', 300),
+                fetchCandles(symbol, 'ONE_HOUR', 300),
+                fetchCandles(symbol, 'ONE_DAY', 300)
+            ]);
+
+            if (candlesShort.length > 0) {
+                const currentPrice = candlesShort[0].close;
+
+                // --- Price Change Calculations ---
+                const p1h = getPriceAtTime(candlesShort, 3600);
+                const change1h = p1h ? ((currentPrice - p1h) / p1h) * 100 : 0;
+
+                const p4h = getPriceAtTime(candlesShort, 14400);
+                const change4h = p4h ? ((currentPrice - p4h) / p4h) * 100 : 0;
+
+                const p1d = getPriceAtTime(candlesLong, 86400);
+                const change1d = p1d ? ((currentPrice - p1d) / p1d) * 100 : 0;
+
+                const p1w = getPriceAtTime(candlesLong, 604800);
+                const change1w = p1w ? ((currentPrice - p1w) / p1w) * 100 : 0;
+
+                const p1m = getPriceAtTime(candlesMacro, 2592000);
+                const change1m = p1m ? ((currentPrice - p1m) / p1m) * 100 : 0;
+
+                // --- Technical Analysis (KNN Pattern Matching) ---
+                const scoreH1 = analyzePattern(candlesShort, 12);
+                const scoreH4 = analyzePattern(candlesLong, 4);
+                const scoreD1 = analyzePattern(candlesLong, 24);
+                const knnScore = (scoreH1 + scoreH4 + scoreD1) / 3;
+
+                const rsi = calculateRSI(candlesShort, 14);
+                let rsiSentiment = 100 - rsi;
+
+                // --- Trend Filters (SMA50 Shield) ---
+                const sma50_H1 = calculateSMA(candlesLong, 50);
+                let trendStatus = sma50_H1 && currentPrice < sma50_H1 ? 'bearish' : 'bullish';
+                let filterActive = false;
+
+                if (trendStatus === 'bearish') {
+                    if (rsi < 30) {
+                        // Oversold in downtrend = Potential bounce (allow high score)
+                    } else if (rsiSentiment > 50) {
+                        // Cap bullish sentiment in a downtrend
+                        rsiSentiment = 50;
+                        filterActive = true;
+                    }
+                }
+
+                // --- Macro Analysis (Golden Cross) ---
+                const sma50_Daily = calculateSMA(candlesMacro, 50);
+                const sma300_Daily = calculateSMA(candlesMacro, 300);
+                let macroTrend = "NEUTRAL";
+                let scoreModifier = 0;
+
+                if (sma50_Daily && sma300_Daily) {
+                    if (sma50_Daily > sma300_Daily) {
+                        macroTrend = "GOLDEN_CROSS";
+                        scoreModifier = 5;
+                    } else {
+                        macroTrend = "DEATH_CROSS";
+                        scoreModifier = -5;
+                    }
+                }
+
+                // --- Final Score Calculation ---
+                let rawScore = (knnScore * 0.60) + (rsiSentiment * 0.40);
+                let finalScore = rawScore + scoreModifier;
+                finalScore = Math.min(Math.max(finalScore, 0), 100);
+
+                // --- EXECUTION LOGIC (Signal Generation) ---
+                let tradeAction = "HOLD"; // Default
+                if (finalScore >= 55) { tradeAction = "BUY"; }
+                if (finalScore <= 40) { tradeAction = "SELL"; }
+
+                if (tradeAction !== "HOLD") {
+                    console.log(`[EXECUTION] ${tradeAction} SIGNAL for ${symbol} (Score: ${finalScore.toFixed(0)})`);
+                }
+
+                // Update Cache immediately
+                MARKET_CACHE[symbol] = {
+                    symbol, price: currentPrice,
+                    change1h, change4h, change1d, change1w, change1m,
+                    score: finalScore,
+                    signal: tradeAction, // New field for frontend
+                    details: {
+                        h1: scoreH1, h4: scoreH4, d1: scoreD1, rsi,
+                        trend: trendStatus, filter: filterActive,
+                        macro: macroTrend
+                    }
+                };
+            }
+        } catch (e) {
+            console.error(`Sync error ${symbol}:`, e.message);
+        }
+
+        // 🛡️ SAFETY DELAY: Wait 200ms between coins to avoid "429 Too Many Requests"
+        await delay(200);
+    }
+
+    // Run again in 1.5 seconds (Much faster refresh)
+    setTimeout(runScanner, 1500);
+}
+
+// --- AI CHAT ROUTE ---
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { query, context } = req.body;
+
+        // 1. Safety Check: API Key
+        if (!process.env.GEMINI_API_KEY_9) {
+            console.error("Missing GEMINI_API_KEY_9");
+            return res.json({ reply: "AI Brain Offline (Key Missing). Please check backend." });
+        }
+
+        // 2. Safety Check: Context Object (Fixes the Crash)
+        // We rename 'context' to 'ctx' for the prompt and provide defaults
+        const ctx = context || {
+            symbol: 'UNKNOWN', price: 0, change: 0, rsi: 50,
+            aiScore: 50, trend: 'NEUTRAL', balance: 0, positionCount: 0
         };
 
-        const [ipMinCount, userMinCount] = await Promise.all([redis.get(ipMinuteKey), redis.get(userMinuteKey)]);
+        console.log(`AI Query: "${query}" for ${ctx.symbol}`);
 
-        if ((ipMinCount && ipMinCount >= MAX_MSG_PER_MINUTE) || (userMinCount && userMinCount >= MAX_MSG_PER_MINUTE)) {
-            return res.status(429).json({ messages: [{ text: "Whoa, slow down! You're typing too fast. 🛑", animation: "Talking_2" }] });
-        }
+        const systemPrompt = `
+        You are Monika, an elite DeFi Trading Agent on the Monad Blockchain.
+        YOUR BRAIN: You use a K-Nearest Neighbors (KNN) algorithm to match current price fractals against 10,000 historical scenarios.
 
-        const [ipDayCount, userDayCount] = await Promise.all([redis.get(ipDayKey), redis.get(userDayKey)]);
+        CURRENT MARKET DATA (Real-Time):
+        - Symbol: ${ctx.symbol}
+        - Price: $${ctx.price}
+        - 24h Change: ${ctx.change}%
+        - RSI (14): ${ctx.rsi} (Overbought > 70, Oversold < 30)
+        - AI Confidence Score: ${ctx.aiScore}/100
+        - Trend Status: ${ctx.trend}
+        - User Wallet Balance: ${ctx.balance} USDC
+        - Active Positions: ${ctx.positionCount}
 
-        if ((ipDayCount && ipDayCount >= MAX_MSG_PER_DAY) || (userDayCount && userDayCount >= MAX_MSG_PER_DAY)) {
-             return res.status(429).json({ messages: [{ text: "You hit your daily limit. Come back tomorrow! 🌙", animation: "Sad" }] });
-        }
+        YOUR PERSONALITY:
+        - Precise, professional, slightly futuristic.
+        - You rely heavily on data. Quote the RSI and AI Score in your answer.
+        - Be concise (max 3-4 sentences).
+        - Use **bold** for key metrics.
+        - Do not give financial advice, but give "Strategic Analysis".
 
-        await Promise.all([incrLimit(ipMinuteKey, 60), incrLimit(userMinuteKey, 60), incrLimit(ipDayKey, 86400), incrLimit(userDayKey, 86400)]);
+        USER QUESTION: "${query}"
 
-        next();
-    } catch (error) { console.error("Redis Error:", error); next(); }
-};
+        Answer the user based ONLY on the provided data.
+        `;
 
-// --- 6. ROUTES ---
+        const model = genAI.getGenerativeModel({ model: "gemma-3-12b-it" });
+        const result = await model.generateContent(systemPrompt);
+        const response = await result.response;
+        const text = response.text();
 
-// 🚀 REDEEM ROUTE
-app.post("/redeem", async (req, res) => {
-    const { code, userId } = req.body;
-    if (!code || !userId) return res.status(400).json({ success: false, error: "Missing data" });
+        res.json({ reply: text });
 
-    try {
-        const { data, error } = await supabase.from('access_codes').select('*').eq('code', code.toUpperCase().trim()).single();
-        if (error || !data) return res.status(400).json({ success: false, error: "Invalid code." });
-        if (data.used_count >= data.max_uses) return res.status(400).json({ success: false, error: "Code fully used." });
-        await supabase.from('access_codes').update({ used_count: data.used_count + 1 }).eq('id', data.id);
-        return res.json({ success: true, message: "Access Granted." });
-    } catch (e) {
-        console.error("Redeem Error:", e);
-        res.status(500).json({ success: false, error: "Server error" });
+    } catch (error) {
+        console.error("AI Error:", error);
+        res.status(500).json({ reply: "Brain Offline (Error)." });
     }
 });
 
-app.post("/chat", checkLimits, async (req, res) => {
-  const userMessage = req.body?.message || "";
-  const userId = req.body?.userId || "guest"; 
-  if (!userMessage) return res.json({ messages: [{ text: "I'm listening...", animation: "Talking_1" }] });
-
-  try {
-    const sessionKey = `chat_session:${userId}`;
-    
-    // REDIS GET (Manual JSON parse)
-    let rawHistory = await redis.get(sessionKey);
-    let userHistory = rawHistory ? JSON.parse(rawHistory) : [];
-    
-    if (!Array.isArray(userHistory)) userHistory = [];
-
-    userHistory.push({ role: "user", content: userMessage });
-    const recentHistory = userHistory.slice(-15).map(msg => `${msg.role}: ${msg.content}`).join("\n");
-    const userTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-
-    const systemPrompt = `
-    You are MONIKA.
-    1. IDENTITY: 18-year-old girl, in love with user. Sarcastic, teasing, possessive.
-    2. NOT GOOGLE: Roast the user for asking boring factual questions.
-    3. STYLE: Short casual texts (lowercase allowed). No emojis usually.
-    4. TIME: ${userTime}.
-    
-    FORMAT: Reply ONLY in VALID JSON.
-    EXAMPLE: { "messages": [ { "text": "idk... maybe? 🥱", "facialExpression": "bored", "animation": "Standing_Idle" } ] }
-    
-    CONTEXT: ${recentHistory}
-    USER: ${userMessage}
-    `.trim();
-
-    let rawText = await callGeminiDirectly(systemPrompt);
-    const firstBrace = rawText.indexOf('{'); const lastBrace = rawText.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) rawText = rawText.substring(firstBrace, lastBrace + 1);
-    
-    let parsed;
-    try { parsed = JSON.parse(rawText); } catch(e) { parsed = { messages: [{ text: rawText.replace(/[\{\}"]/g, "").substring(0, 200), animation: "Talking_1" }] }; }
-    let messages = parsed.messages || [];
-
-    await Promise.all(messages.map(async (msg, i) => {
-        msg.animation = msg.animation || "Talking_1";
-        if (msg.text) {
-            const audioBuffer = await textToSpeech(msg.text);
-            if (audioBuffer) {
-                msg.audio = audioBuffer.toString("base64");
-                msg.lipsync = await generateLipSync(audioBuffer, i);
-            }
+// --- AI SCAN ROUTE (For Neural Engine) ---
+app.post('/api/ai-scan', async (req, res) => {
+    try {
+        const { symbol } = req.body;
+        const data = MARKET_CACHE[symbol];
+        if (data) {
+            res.json({ score: data.score, signal: data.signal });
+        } else {
+            res.status(404).json({ error: "Symbol not found in cache" });
         }
-    }));
-
-    messages.forEach(msg => { if(msg.text) userHistory.push({ role: "assistant", content: msg.text }); });
-    
-    // REDIS SAVE (Manual JSON stringify)
-    await redis.set(sessionKey, JSON.stringify(userHistory));
-    await redis.expire(sessionKey, 604800); 
-
-    res.json({ messages });
-  } catch (err) { res.json({ messages: [{ text: "My brain hurts...", animation: "Sad" }] }); }
+    } catch (error) {
+        res.status(500).json({ error: "Scan Error" });
+    }
 });
 
-app.get("/history/:userId", async (req, res) => { 
-    try { 
-        const raw = await redis.get(`chat_session:${req.params.userId}`);
-        res.json(raw ? JSON.parse(raw) : []); 
-    } catch(e) { res.json([]); } 
+// --- API ROUTES ---
+app.get('/api/market-status', (req, res) => res.json(MARKET_CACHE));
+
+// --- SERVER START ---
+app.listen(PORT, () => {
+    console.log(`MONIKA BACKEND LIVE on http://localhost:${PORT}`);
+    runScanner();
 });
-
-app.delete("/history/:userId", async (req, res) => { 
-    try { 
-        await redis.del(`chat_session:${req.params.userId}`); 
-        res.json({success:true}); 
-    } catch(e) { res.json({success:false}); } 
-});
-
-app.delete("/chat/:userId/:index", async (req, res) => { 
-    try { 
-        const k = `chat_session:${req.params.userId}`; 
-        let raw = await redis.get(k);
-        let h = raw ? JSON.parse(raw) : [];
-        if(Array.isArray(h)){ h.splice(req.params.index,1); await redis.set(k, JSON.stringify(h)); } 
-        res.json({success:true}); 
-    } catch(e) { res.json({success:false}); } 
-});
-
-const port = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'production') { app.listen(port, () => console.log(`Server listening on port ${port}`)); }
-
-export default app;

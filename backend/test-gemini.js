@@ -15,7 +15,7 @@ async function main() {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
-  const prompt = "Dis juste: Bonjour, je suis ta copine virtuelle 💕";
+  const prompt = "Dis juste: Bonjour, je suis ta copine virtuelle";
 
   try {
     const result = await model.generateContent(prompt);
