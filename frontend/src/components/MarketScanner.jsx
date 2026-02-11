@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 
 const BACKEND_URL = import.meta.env.DEV
     ? "http://localhost:3000/api/market-status"
-    : "https://monika-ai-mjox.vercel.app/api/market-status";
+    : "https://monikaai-production.up.railway.app/api/market-status";
 
 export default function MarketScanner({ onSelectCoin }) {
     const [data, setData] = useState({});

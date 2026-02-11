@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
-const backendUrl = "https://monika-ai-mjox.vercel.app";
+const backendUrl = "https://monikaai-production.up.railway.app";
 
 const ChatContext = createContext();
 
@@ -14,8 +14,8 @@ export const ChatProvider = ({ children }) => {
   const getUserId = () => {
     let storedId = localStorage.getItem("monika_user_id");
     if (!storedId) {
-        storedId = "user_" + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem("monika_user_id", storedId);
+      storedId = "user_" + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem("monika_user_id", storedId);
     }
     return storedId;
   };
@@ -27,9 +27,9 @@ export const ChatProvider = ({ children }) => {
         const res = await fetch(`${backendUrl}/history/${userId}`);
         const history = await res.json();
         const formattedHistory = history.map(msg => ({
-            text: msg.content,
-            role: msg.role,
-            audio: null 
+          text: msg.content,
+          role: msg.role,
+          audio: null
         }));
         setMessages(formattedHistory);
       } catch (e) {
@@ -54,7 +54,7 @@ export const ChatProvider = ({ children }) => {
       const incomingMessages = resp.messages.map(msg => ({ ...msg, role: "assistant" }));
       setMessages((prev) => [...prev, ...incomingMessages]);
       setLoading(false);
-      setAudioPlayed(false); 
+      setAudioPlayed(false);
     } catch (error) {
       console.error("Erreur Chat:", error);
       setLoading(false);
@@ -65,30 +65,30 @@ export const ChatProvider = ({ children }) => {
     const userId = getUserId();
     setMessages((prev) => prev.filter((_, i) => i !== index));
     try {
-        await fetch(`${backendUrl}/chat/${userId}/${index}`, { method: "DELETE" });
+      await fetch(`${backendUrl}/chat/${userId}/${index}`, { method: "DELETE" });
     } catch (e) { console.error("Erreur suppression:", e); }
   };
 
   // --- NOUVELLE FONCTION RESET ---
   const resetChat = async () => {
     const userId = getUserId();
-    
+
     // 1. Vide l'écran
     setMessages([]);
     setMessage(null); // Stop l'audio en cours s'il y en a un
-    
+
     // 2. Vide le serveur
     try {
-        await fetch(`${backendUrl}/history/${userId}`, { method: "DELETE" });
+      await fetch(`${backendUrl}/history/${userId}`, { method: "DELETE" });
     } catch (e) { console.error("Erreur Reset:", e); }
   };
 
   useEffect(() => {
     if (!loading && !audioPlayed) {
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg && lastMsg.role === "assistant" && lastMsg.audio && message !== lastMsg) {
-             setMessage(lastMsg);
-        }
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg && lastMsg.role === "assistant" && lastMsg.audio && message !== lastMsg) {
+        setMessage(lastMsg);
+      }
     }
   }, [messages, loading, audioPlayed, message]);
 
@@ -101,7 +101,7 @@ export const ChatProvider = ({ children }) => {
     <ChatContext.Provider
       value={{
         chat,
-        message, 
+        message,
         onMessagePlayed,
         loading,
         cameraZoomed,

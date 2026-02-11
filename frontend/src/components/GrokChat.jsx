@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 // SECURE & DYNAMIC BACKEND URL
 const BASE_URL = import.meta.env.DEV
     ? "http://localhost:3000"
-    : "https://monika-ai-mjox.vercel.app";
+    : "https://monikaai-production.up.railway.app";
 
 const GrokChat = ({ marketStats, selectedSymbol, wallet, neuralAnalysis, rsiValues }) => {
     const [isOpen, setIsOpen] = useState(false);

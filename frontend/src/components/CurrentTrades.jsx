@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 // NOTE: Ensure this matches your backend URL
 const PORTFOLIO_URL = window.location.hostname === "localhost"
     ? "http://localhost:3000/api/portfolio"
-    : "https://monika-ai-mjox.vercel.app/api/portfolio";
+    : "https://monikaai-production.up.railway.app/api/portfolio";
 
 export default function CurrentTrades() {
     const [portfolio, setPortfolio] = useState({ balance: 1.46, active: [], history: [] });

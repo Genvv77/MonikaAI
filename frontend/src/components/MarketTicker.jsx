@@ -13,7 +13,7 @@ export default function MarketTicker({ activeTimeframe = '1D', onSelectCoin }) {
             try {
                 const BACKEND_URL = import.meta.env.DEV
                     ? 'http://localhost:3000/api/market-status'
-                    : 'https://monika-ai-mjox.vercel.app/api/market-status';
+                    : 'https://monikaai-production.up.railway.app/api/market-status';
                 const res = await fetch(BACKEND_URL);
                 const data = await res.json();
                 setMarketData(data);

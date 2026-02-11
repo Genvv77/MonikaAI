@@ -16,7 +16,8 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 const ALLOWED_ORIGINS = [
     'http://localhost:5173', // Your local React dev server
     'http://localhost:3000',
-    'http://monika-ai-cve5.vercel.app', // ADD YOUR REAL VERCEL URL HERE
+    'http://monika-ai-cve5.vercel.app',
+    'monikaai-production.up.railway.app',
     'http://monika-ai.xyz'
 ];
 

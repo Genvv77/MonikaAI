@@ -38,7 +38,7 @@ export const Welcome = ({ onStart }) => {
       // --- STEP 1: DEFINE BACKEND URL ---
       const BACKEND_URL = window.location.hostname === "localhost"
         ? "http://localhost:3000"
-        : "https://monika-ai-mjox.vercel.app";
+        : "https://monikaai-production.up.railway.app";
 
       // --- STEP 2: CALL BACKEND ---
       const res = await fetch(`${BACKEND_URL}/redeem`, {

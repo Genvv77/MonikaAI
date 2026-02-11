@@ -243,7 +243,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
     useEffect(() => { scanMarket('BTC-USD'); }, []);
 
     // --- NEURAL ENGINE ---
-    const BACKEND_URL = import.meta.env.DEV ? "http://localhost:3000/api/ai-scan" : "https://monika-ai-mjox.vercel.app/api/ai-scan";
+    const BACKEND_URL = import.meta.env.DEV ? "http://localhost:3000/api/ai-scan" : "https://monikaai-production.up.railway.app/api/ai-scan";
     async function fetchAIScan(symbol, timeframe) {
         try {
             const res = await fetch(BACKEND_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol }) });
