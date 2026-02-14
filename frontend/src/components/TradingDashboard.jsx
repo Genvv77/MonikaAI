@@ -156,8 +156,17 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
         setShowPanicConfirm(false);
     };
 
+
     const handleClosePosition = async (symbol) => {
         await executeTrade(symbol, "SELL", 0);
+    };
+
+    const handleExportWithPassword = async (password) => {
+        const unlockResult = await unlockWallet(password);
+        if (unlockResult.success) {
+            return { success: true, privateKey: exportPrivateKey() };
+        }
+        return unlockResult;
     };
 
     if (!wallet) return (
@@ -213,7 +222,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                     </div>
                 </div>
             )}
-            {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onExportKey={exportPrivateKey} />}
+            {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onExportKey={handleExportWithPassword} />}
 
             {/* HEADER */}
             <header className="h-16 border-b border-gray-800 bg-[#0A0E14] flex items-center justify-between px-6 shrink-0">
