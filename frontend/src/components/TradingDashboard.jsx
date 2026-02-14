@@ -12,6 +12,7 @@ import MarketScanner from './MarketScanner';
 import WalletCard from './WalletCard';
 import NeuralEngine from './NeuralEngine';
 import GrokChat from './GrokChat';
+import TutorialOverlay from './TutorialOverlay';
 
 const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
     const {
@@ -178,6 +179,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
 
     return (
         <div className="fixed inset-0 w-full h-screen bg-[#070B10] text-gray-300 font-sans selection:bg-green-500/30 overflow-hidden flex flex-col z-[100]">
+            {!walletLocked && <TutorialOverlay />}
 
             {/* TOASTS */}
             <div className="fixed top-20 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
@@ -234,6 +236,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                 <div className="flex items-center gap-4 text-sm font-mono">
                     {/* SETTINGS BUTTON RESTORED */}
                     <button
+                        id="export-wallet"
                         onClick={() => setShowSettings(true)}
                         className="text-gray-500 hover:text-white transition-colors p-2"
                         title="Settings & Export"
@@ -256,9 +259,9 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
             </header>
 
             {/* CONTENT */}
-            <div className="flex-1 px-6 py-4 grid grid-cols-12 gap-4 h-[calc(100vh-80px)] overflow-y-auto">
+            <div className="flex-1 px-6 py-4 grid grid-cols-12 gap-4 h-[calc(100vh-80px)] overflow-y-auto scrollbar-hide">
                 <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-full overflow-hidden">
-                    <div className="shrink-0">
+                    <div className="shrink-0" id="gas-fee">
                         <WalletCard balance={wallet} nativeBalance={nativeBalance} usdcBalance={usdcBalance} isLocked={walletLocked} onLock={() => { lockWallet(); setShowUnlock(true); }} onUnlock={() => setShowUnlock(true)} marketStats={marketStats} address={walletAddress} />
                     </div>
 
@@ -270,7 +273,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                         <MarketScanner onSelectCoin={setSelectedSymbol} />
                     </div>
 
-                    <div className="shrink-0 flex flex-col gap-2">
+                    <div className="shrink-0 flex flex-col gap-2" id="trading-terminal">
                         <button
                             onClick={() => setBotActive(!botActive)}
                             className={`w-full py-3 font-bold rounded shadow uppercase tracking-wider transition-all text-xs flex items-center justify-center gap-2 ${!botActive ? 'bg-green-500 hover:bg-green-400 text-black' : 'bg-red-500 hover:bg-red-400 text-black animate-pulse'}`}
@@ -280,13 +283,15 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
 
                         <div className="flex gap-2">
                             <button onClick={forceBuy} className="flex-1 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 rounded text-blue-400 text-[10px] font-bold uppercase tracking-wide transition-colors">Force Buy {selectedSymbol.replace('-USD', '')}</button>
-                            <button onClick={handlePanicClick} className="flex-1 py-2 bg-red-900/20 hover:bg-red-500/20 border border-red-500/30 rounded text-red-500 text-[10px] font-bold uppercase tracking-wide transition-colors" title="SELL ALL">Panic Sell</button>
+                            <button id="panic-sell" onClick={handlePanicClick} className="flex-1 py-2 bg-red-900/20 hover:bg-red-500/20 border border-red-500/30 rounded text-red-500 text-[10px] font-bold uppercase tracking-wide transition-colors" title="SELL ALL">Panic Sell</button>
                         </div>
                     </div>
                 </div>
 
                 <div className="col-span-12 lg:col-span-9 flex flex-col gap-4 h-[850px]">
-                    <MarketTicker activeTimeframe={timeframe} onSelectCoin={setSelectedSymbol} marketData={marketStats} />
+                    <div id="market-stats">
+                        <MarketTicker activeTimeframe={timeframe} onSelectCoin={setSelectedSymbol} marketData={marketStats} />
+                    </div>
                     <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0">
                         <div className="flex flex-col gap-4 h-full min-h-0">
                             <div className="flex-1 bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden flex flex-col min-h-0 shadow-lg relative">
@@ -303,10 +308,10 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                         </div>
 
                         <div className="flex flex-col gap-4 min-h-0 h-full">
-                            <div className="h-[480px] bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden relative shadow-2xl shrink-0">
+                            <div id="price-chart" className="h-[480px] bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden relative shadow-2xl shrink-0">
                                 <CustomChart key={selectedSymbol} symbol={selectedSymbol} position={activePosition} tradePlan={getTradePlan(selectedSymbol)} currentPrice={activeCoinData.price || prices[selectedSymbol]} candlesData={candles[selectedSymbol]} smaData={smaValues[selectedSymbol]} rsiValue={rsiValues[selectedSymbol]} markers={[]} activeTimeframe={timeframe} onTimeframeChange={changeTimeframe} availablePairs={[]} onSelectPair={setSelectedSymbol} />
                             </div>
-                            <div className="flex-1 bg-[#0D1117] border border-gray-800 p-2 rounded-xl flex flex-col min-h-0 bg-opacity-50 backdrop-blur-sm">
+                            <div id="logs-panel" className="flex-1 bg-[#0D1117] border border-gray-800 p-2 rounded-xl flex flex-col min-h-0 bg-opacity-50 backdrop-blur-sm">
                                 <h2 className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-1 ml-1 flex justify-between">
                                     <span>System Logs</span>
                                     <span className={botActive ? "text-green-500 animate-pulse" : "text-gray-600"}>{botActive ? "AUTO-PILOT ON" : "MANUAL MODE"}</span>
@@ -334,10 +339,10 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                         </svg>
                     </a>
 
-                    {/* YouTube */}
-                    <a href="#" className="text-gray-500 hover:text-[#FF0000] transition-colors group">
-                        <svg className="w-6 h-6 fill-current" viewBox="0 0 24 24">
-                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                    {/* GitBook */}
+                    <a href="https://monika.gitbook.io/monika-docs" className="text-gray-500 hover:text-white transition-colors group">
+                        <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                            <path d="M12.513 1.097c-.645 0-1.233.34-2.407 1.017L3.675 5.82A7.233 7.233 0 0 0 0 12.063v.236a7.233 7.233 0 0 0 3.667 6.238L7.69 20.86c2.354 1.36 3.531 2.042 4.824 2.042 1.292.001 2.47-.678 4.825-2.038l4.251-2.453c1.177-.68 1.764-1.02 2.087-1.579.323-.56.324-1.24.323-2.6v-2.63a1.04 1.04 0 0 0-1.558-.903l-8.728 5.024c-.587.337-.88.507-1.201.507-.323 0-.616-.168-1.204-.506l-5.904-3.393c-.297-.171-.446-.256-.565-.271a.603.603 0 0 0-.634.368c-.045.111-.045.282-.043.625.002.252 0 .378.025.494.053.259.189.493.387.667.089.077.198.14.416.266l6.315 3.65c.589.34.884.51 1.207.51.324 0 .617-.17 1.206-.509l7.74-4.469c.202-.116.302-.172.377-.13.075.044.075.16.075.392v1.193c0 .34.001.51-.08.649-.08.14-.227.224-.522.394l-6.382 3.685c-1.178.68-1.767 1.02-2.413 1.02-.646 0-1.236-.34-2.412-1.022l-5.97-3.452-.043-.025a4.106 4.106 0 0 1-2.031-3.52V11.7c0-.801.427-1.541 1.12-1.944a1.979 1.979 0 0 1 1.982-.001l4.946 2.858c1.174.679 1.762 1.019 2.407 1.02.645 0 1.233-.34 2.41-1.017l7.482-4.306a1.091 1.091 0 0 0 0-1.891L14.92 2.11c-1.175-.675-1.762-1.013-2.406-1.013Z" />
                         </svg>
                     </a>
                 </footer>
