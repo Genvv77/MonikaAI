@@ -88,18 +88,19 @@ npm install
 
 Start the Vite development server:
 npm run dev
+```
 
-Usage
+## Usage
 Navigate to http://localhost:5173.
 Experience the 3D GF Mode or proceed directly to /trading.
 Create a burner wallet within the app (encrypted via password).
-Fund the wallet with a small amount of MON (for gas) and USDC on the Monad Mainnet.
-Click START ENGINE to enable Auto-Pilot, force buy to manually open a position, or use the GrokChat in the bottom right to ask Monika about current market conditions.
+Fund the wallet with a small amount of MON (for gas) and USDC on Monad.
+Click START ENGINE to enable Auto-Pilot, force buy to manually open a position, or use the AI Chat in the bottom right to ask Monika about current market conditions.
 
-⚖️ License & Attribution
+## ⚖️ License & Attribution
 This project is open-sourced under the MIT License.
 
-Attributions:
+### Attributions:
 
 Data fetching architecture inspired by standard OHLCV aggregator patterns.
 3D rendering utilizes standard WebGL/Three.js libraries.
