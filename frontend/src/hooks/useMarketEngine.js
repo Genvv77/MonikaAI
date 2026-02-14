@@ -149,7 +149,8 @@ export const useMarketEngine = (initialBalance = 1000) => {
 
         let backendData = {};
         try {
-            const res = await fetch('http://localhost:3000/api/market-status');
+            const API_BASE = import.meta.env.DEV ? "http://localhost:3000" : "https://monikaai-production.up.railway.app";
+            const res = await fetch(`${API_BASE}/api/market-status`);
             backendData = await res.json();
         } catch (e) {
             console.warn("Backend Brain Offline");
