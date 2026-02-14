@@ -26,7 +26,7 @@ export default function MarketScanner({ onSelectCoin }) {
     return (
         <div className="bg-[#0b0f19] border border-white/10 rounded-xl p-3 flex flex-col h-full overflow-hidden min-h-[150px]">
             <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-1 shrink-0">
-                <h3 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
+                <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
                     Global Sentiment
                 </h3>
             </div>

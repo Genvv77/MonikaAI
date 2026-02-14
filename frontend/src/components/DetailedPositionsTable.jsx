@@ -3,10 +3,15 @@ import React from 'react';
 const DetailedPositionsTable = ({ positions, marketStats = {}, botActive = false, onClosePosition, onRowClick }) => {
 
     // HELPER: Anti-NaN Formatter
-    const formatNum = (val, decimals = 2) => {
+    // HELPER: Adaptive Number Formatting
+    const formatNum = (val) => {
         const num = parseFloat(val);
         if (isNaN(num)) return "0.00";
-        return num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+        if (num === 0) return "0.00";
+        const abs = Math.abs(num);
+        if (abs >= 1000) return num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        if (abs >= 1) return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return num.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
     };
 
     // EMPTY STATE LOGIC
@@ -35,7 +40,7 @@ const DetailedPositionsTable = ({ positions, marketStats = {}, botActive = false
     return (
         <div className="w-full h-full overflow-hidden flex flex-col bg-[#0b0f19]">
             {/* Header Row */}
-            <div className="grid grid-cols-8 gap-2 px-4 py-2 border-b border-gray-800 text-[9px] font-bold text-gray-500 uppercase tracking-wider bg-[#0A0E14]">
+            <div className="grid grid-cols-[0.8fr_1.2fr_1fr_1fr_0.8fr_1fr_1.2fr_0.6fr] gap-2 px-4 py-2 border-b border-gray-800 text-[9px] font-bold text-gray-500 uppercase tracking-wider bg-[#0A0E14]">
                 <div className="col-span-1 text-center">Symbol</div>
                 <div className="col-span-1 text-right">Value (Margin)</div>
                 <div className="col-span-1 text-right">Entry</div>
@@ -75,7 +80,7 @@ const DetailedPositionsTable = ({ positions, marketStats = {}, botActive = false
                         <div
                             key={idx}
                             onClick={() => onRowClick && onRowClick(pos.symbol)}
-                            className="grid grid-cols-8 gap-2 px-4 py-3 border-b border-gray-800/50 hover:bg-white/5 items-center text-xs font-mono transition-colors group cursor-pointer"
+                            className="grid grid-cols-[0.8fr_1.2fr_1fr_1fr_0.8fr_1fr_1.2fr_0.6fr] gap-2 px-4 py-3 border-b border-gray-800/50 hover:bg-white/5 items-center text-xs font-mono transition-colors group cursor-pointer"
                         >
 
                             {/* Symbol */}
@@ -84,35 +89,35 @@ const DetailedPositionsTable = ({ positions, marketStats = {}, botActive = false
                             </div>
 
                             {/* Value ($) */}
-                            <div className="col-span-1 text-right text-gray-300 font-medium">
-                                ${formatNum(costBasis, 2)}
-                                <span className="block text-[8px] text-gray-600 dark:text-gray-500 font-normal">{formatNum(size, 4)} {pos.symbol.split('-')[0]}</span>
+                            <div className="col-span-1 text-right text-gray-300 font-medium truncate">
+                                ${formatNum(costBasis)}
+                                <span className="block text-[8px] text-gray-600 dark:text-gray-500 font-normal truncate">{formatNum(size)} {pos.symbol.split('-')[0]}</span>
                             </div>
 
                             {/* Entry */}
                             <div className="col-span-1 text-right text-gray-500">
-                                ${formatNum(entry, 4)}
+                                ${formatNum(entry)}
                             </div>
 
                             {/* Mark Price */}
-                            <div className="col-span-1 text-right text-gray-300 font-bold">
-                                ${formatNum(currentPrice, 4)}
+                            <div className="col-span-1 text-right text-gray-300 font-bold truncate">
+                                ${formatNum(currentPrice)}
                             </div>
 
                             {/* PnL */}
                             <div className={`col-span-1 text-right font-bold ${pnlColor}`}>
-                                {isWin ? '+' : ''}{formatNum(pnlRaw, 3)}%
+                                {isWin ? '+' : ''}{pnlRaw.toFixed(2)}%
                             </div>
 
                             {/* Next DCA (Blue) */}
                             <div className="col-span-1 text-right text-blue-400/80 font-medium">
-                                ${formatNum(dcaPrice, 4)}
+                                ${formatNum(dcaPrice)}
                             </div>
 
                             {/* Targets */}
                             <div className="col-span-1 flex flex-col items-center gap-0.5 text-[9px] leading-tight opacity-80">
-                                <span className="text-green-500">TP: ${formatNum(tpPrice, 4)}</span>
-                                <span className="text-red-500">SL: ${formatNum(slPrice, 4)}</span>
+                                <span className="text-green-500">TP: ${formatNum(tpPrice)}</span>
+                                <span className="text-red-500">SL: ${formatNum(slPrice)}</span>
                             </div>
 
                             {/* Action Button */}

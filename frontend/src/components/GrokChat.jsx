@@ -138,7 +138,7 @@ const GrokChat = ({ marketStats, selectedSymbol, wallet, neuralAnalysis, rsiValu
                 </div>
             )}
             <button onClick={() => setIsOpen(!isOpen)} className={`group flex items-center gap-3 p-4 rounded-full shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all duration-300 ${isOpen ? 'bg-gray-800 rotate-90 scale-0' : 'bg-white hover:scale-110 scale-100'}`}>
-                <div className="relative w-6 h-6"><div className="absolute inset-0 bg-black rounded-md transform rotate-6 group-hover:rotate-45 hover:purple-500 transition-transform"></div><div className="absolute inset-0 flex items-center justify-center text-white font-black text-[10px]">AI</div></div>
+                <div className="relative w-6 h-6"><div className="absolute inset-0 bg-black rounded-md transform rotate-6 group-hover:rotate-45 group-hover:bg-purple-500 transition-transform"></div><div className="absolute inset-0 flex items-center justify-center text-white font-black text-[10px]">AI</div></div>
             </button>
             {isOpen && <button onClick={() => setIsOpen(false)} className="absolute bottom-0 right-0 w-14 h-14 bg-gray-800 rounded-full flex items-center justify-center text-white shadow-lg border border-gray-600 hover:bg-gray-700 transition-all"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg></button>}
         </div>

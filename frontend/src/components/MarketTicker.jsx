@@ -4,8 +4,11 @@ const TF_MAP = {
     '1H': 'change1h', '4H': 'change4h', '1D': 'change1d', '1W': 'change1w', '1M': 'change1m'
 };
 
-export default function MarketTicker({ activeTimeframe = '1D', onSelectCoin }) {
-    const [marketData, setMarketData] = useState({});
+export default function MarketTicker({ activeTimeframe = '1D', onSelectCoin, marketData: propData }) {
+    const [internalData, setInternalData] = useState({});
+
+    // USE PROP DATA IF AVAILABLE, FALLBACK TO INTERNAL
+    const marketData = (propData && Object.keys(propData).length > 0) ? propData : internalData;
 
     // RESTORED INTERNAL FETCH: Fallback until Parent Data is robust
     useEffect(() => {
@@ -16,7 +19,7 @@ export default function MarketTicker({ activeTimeframe = '1D', onSelectCoin }) {
                     : 'https://monikaai-production.up.railway.app/api/market-status';
                 const res = await fetch(BACKEND_URL);
                 const data = await res.json();
-                setMarketData(data);
+                setInternalData(data);
             } catch (e) { console.error(e); }
         };
         fetchMarket();

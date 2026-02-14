@@ -286,7 +286,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                 </div>
 
                 <div className="col-span-12 lg:col-span-9 flex flex-col gap-4 h-[850px]">
-                    <MarketTicker activeTimeframe={timeframe} onSelectCoin={setSelectedSymbol} />
+                    <MarketTicker activeTimeframe={timeframe} onSelectCoin={setSelectedSymbol} marketData={marketStats} />
                     <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0">
                         <div className="flex flex-col gap-4 h-full min-h-0">
                             <div className="flex-1 bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden flex flex-col min-h-0 shadow-lg relative">
@@ -312,7 +312,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                                     <span className={botActive ? "text-green-500 animate-pulse" : "text-gray-600"}>{botActive ? "AUTO-PILOT ON" : "MANUAL MODE"}</span>
                                 </h2>
                                 <div className="flex-1 bg-black/20 rounded-lg p-2 text-[10px] font-mono text-gray-400 overflow-y-auto flex flex-col-reverse shadow-inner">
-                                    {logs.map((log, i) => <p key={i} className="mb-0.5 border-b border-white/5 pb-0.5">{log}</p>)}
+                                    {logs.map((log, i) => <p key={i} className="mb-0.5 border-b border-white/5 pb-0.5 break-all">{log}</p>)}
                                 </div>
                             </div>
                         </div>

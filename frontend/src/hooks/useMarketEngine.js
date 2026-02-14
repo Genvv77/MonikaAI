@@ -167,6 +167,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
 
                     const brain = backendData[symbol] || {};
                     newStats[symbol] = {
+                        ...brain, // SPREAD ALL BACKEND DATA (change1h, change4h, etc.)
                         price: last,
                         change: change.toFixed(2),
                         high: parseFloat(data.high),
@@ -191,7 +192,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
         const granularityMap = { '1H': 60, '4H': 300, '1D': 900, '1W': 3600, '1M': 21600 };
         const granularity = granularityMap[period] || 3600;
         const PROXY_MAP = { 'XAUT-USD': 'PAXG-USD' };
-        const newCandles = {}; const newRsi = {}; const newSma = {}; const newPrices = {};
+        const newCandles = {}; const newRsi = {}; const newSma = {};
 
         await Promise.all(symbols.map(async (symbol) => {
             try {
@@ -224,18 +225,18 @@ export const useMarketEngine = (initialBalance = 1000) => {
                             const smaData = SMA.calculate({ values: closes, period: 20 });
                             newSma[symbol] = smaData.map((val, i) => ({ time: formattedCandles[i + 19].time, value: val }));
                         }
-                        newPrices[symbol] = formattedCandles[formattedCandles.length - 1].close;
+
                     }
                 }
             } catch (error) { }
         }));
-        setCandles(prev => ({ ...prev, ...newCandles })); setRsiValues(prev => ({ ...prev, ...newRsi })); setSmaValues(prev => ({ ...prev, ...newSma })); setPrices(prev => ({ ...prev, ...newPrices }));
+        setCandles(prev => ({ ...prev, ...newCandles })); setRsiValues(prev => ({ ...prev, ...newRsi })); setSmaValues(prev => ({ ...prev, ...newSma }));
     };
 
     useEffect(() => {
         fetchTickerStats();
         fetchHistory('1H');
-        const tickerInterval = setInterval(() => { fetchTickerStats(); }, 5000);
+        const tickerInterval = setInterval(() => { fetchTickerStats(); }, 1500);
         return () => clearInterval(tickerInterval);
     }, [rsiLength]);
 
@@ -373,7 +374,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
             }));
         } catch (error) { console.error("Balance Scan Error:", error); }
     };
-    useEffect(() => { if (!walletAddress || walletLocked) return; fetchBalances(); const interval = setInterval(fetchBalances, 15000); return () => clearInterval(interval); }, [walletAddress, walletLocked]);
+    useEffect(() => { if (!walletAddress || walletLocked) return; fetchBalances(); const interval = setInterval(fetchBalances, 11000); return () => clearInterval(interval); }, [walletAddress, walletLocked]);
 
     const walletExists = () => !!localStorage.getItem(ENCRYPTED_WALLET_KEY);
 
@@ -428,7 +429,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                 addLog(`Gas Balance: ${parseFloat(formatEther(balance)).toFixed(4)} MON`);
             } catch (rpcError) {
                 console.warn("Gas check failed (RPC probably overloaded). Assuming enough gas.", rpcError);
-                addLog(`Gas Check Failed (RPC Error). Proceeding anyway...`);
+                addLog(`Gas Check Failed (RPC Error). Proceeding anyway`);
                 balance = parseEther("1.0");
             }
 
@@ -454,10 +455,10 @@ export const useMarketEngine = (initialBalance = 1000) => {
             if (!tokenAddress) { addLog(`Token not supported: ${symbol} (${tokenKey})`); return; }
 
             const triggerSimulatedSuccess = (simSymbol, simSide, simPrice, simAmount) => {
-                addLog(`Chain Busy. Switching to Hybrid Execution (Simulation)...`);
+                addLog(`Chain Busy. Switching to Hybrid Execution (Simulation)`);
                 setTimeout(() => {
                     const txHash = "0xsimulated_" + Date.now();
-                    addLog(`Tx Sent: ${txHash.substring(0, 12)}...`);
+                    addLog(`Tx Sent: ${txHash}`);
                     addToast("Order Executed (Hybrid)", "success", txHash);
 
                     if (simSide === 'BUY') {
@@ -497,19 +498,19 @@ export const useMarketEngine = (initialBalance = 1000) => {
                 const isXaut = symbol.toUpperCase().includes('XAUT');
 
                 if (isXaut) {
-                    addLog(`SPECIAL ROUTING ENGAGED for XAUT...`);
+                    addLog(`SPECIAL ROUTING ENGAGED for XAUT`);
                     const aUsdContract = new Contract(TOKENS.aUSD, ERC20_ABI, signer);
                     const aUsdBalance = await aUsdContract.balanceOf(signer.address);
 
                     if (aUsdBalance < amountIn) {
-                        addLog(`Insufficient aUSD. Auto-Converting USDC -> aUSD...`);
+                        addLog(`Insufficient aUSD. Auto-Converting USDC -> aUSD`);
                         const usdcAllowance = await usdc.allowance(signer.address, ROUTER_ADDRESS);
                         if (usdcAllowance < amountIn) {
-                            addLog(`Approving USDC for Pancake...`);
+                            addLog(`Approving USDC for Pancake`);
                             const txApp = await usdc.approve(ROUTER_ADDRESS, MaxUint256);
                             await txApp.wait();
                         }
-                        addLog(`Swapping USDC -> aUSD...`);
+                        addLog(`Swapping USDC -> aUSD`);
                         let swapSuccess = false;
                         const FEES = [100, 500, 3000];
                         for (const fee of FEES) {
@@ -521,7 +522,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                                     amountIn: amountIn, amountOutMinimum: 0, sqrtPriceLimitX96: 0
                                 };
                                 const txSwap = await router.exactInputSingle(swapParams);
-                                addLog(`USDC -> aUSD Sent: ${txSwap.hash.substring(0, 8)}...`);
+                                addLog(`USDC -> aUSD Sent: ${txSwap.hash}`);
                                 await txSwap.wait();
                                 addLog(`aUSD Acquired.`);
                                 swapSuccess = true;
@@ -531,12 +532,12 @@ export const useMarketEngine = (initialBalance = 1000) => {
                         if (!swapSuccess) throw new Error("Failed to acquire aUSD (Base Asset for XAUT)");
                     }
 
-                    addLog(`Executing aUSD -> XAUT via Uniswap V3 (SwapRouter02)...`);
+                    addLog(`Executing aUSD -> XAUT via Uniswap V3 (SwapRouter02)`);
                     const v3Router = new Contract(ROUTER_V3_02, ROUTER_ABI, signer);
                     const currentBalance = await aUsdContract.balanceOf(signer.address);
                     const aUsdAllowance = await aUsdContract.allowance(signer.address, ROUTER_V3_02);
                     if (aUsdAllowance < currentBalance) {
-                        addLog(`Approving aUSD for SwapRouter02...`);
+                        addLog(`Approving aUSD for SwapRouter02`);
                         const txApp = await aUsdContract.approve(ROUTER_V3_02, MaxUint256);
                         await txApp.wait();
                     }
@@ -562,7 +563,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                         console.warn("SwapRouter02 Failed. Attempting Fallback to Pancake V3...");
                         const pAllowance = await aUsdContract.allowance(signer.address, ROUTER_ADDRESS);
                         if (pAllowance < amountIn) {
-                            addLog(`Approving aUSD for Pancake V3...`);
+                            addLog(`Approving aUSD for Pancake V3`);
                             const txApp = await aUsdContract.approve(ROUTER_ADDRESS, MaxUint256);
                             await txApp.wait();
                         }
@@ -594,7 +595,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                                     const v2Router = new Contract(ROUTER_V2_ADDRESS, ROUTER_ABI, signer);
                                     const v2Allowance = await aUsdContract.allowance(signer.address, ROUTER_V2_ADDRESS);
                                     if (v2Allowance < amountIn) {
-                                        addLog(`Approving aUSD for V2 Router...`);
+                                        addLog(`Approving aUSD for V2 Router`);
                                         const txApp = await aUsdContract.approve(ROUTER_V2_ADDRESS, MaxUint256);
                                         await txApp.wait();
                                     }
@@ -610,10 +611,10 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     }
 
                     // --- XAUT STATE UPDATE ---
-                    addLog(`Tx Sent: ${tx.hash.substring(0, 12)}...`);
+                    addLog(`Tx Sent: ${tx.hash}`);
                     addToast("Order Submitted (On-Chain)", "info", tx.hash);
                     await tx.wait();
-                    addLog(`Trade Confirmed: ${tx.hash.substring(0, 12)}`);
+                    addLog(`Trade Confirmed: ${tx.hash}`);
                     addToast("Trade Confirmed", "success", tx.hash);
 
                     const entryPrice = pricesRef.current[symbol] || 0;
@@ -631,7 +632,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     return; // Exit XAUT Block
                 } else {
                     const targetToken = symbol === 'MON-USD' ? TOKENS.WMON : tokenAddress;
-                    addLog(`Swapping USDC for ${symbol} (V3)...`);
+                    addLog(`Swapping USDC for ${symbol} (V3)`);
                     const ROUTERS = [{ name: "PancakeSwap V3", address: ROUTER_ADDRESS }, { name: "Uniswap V3", address: ROUTER_V3_02 }];
                     const FEES = [3000, 2500, 500, 10000, 100];
                     let success = false;
@@ -642,7 +643,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                         try {
                             const currentAllowance = await usdc.allowance(signer.address, routerInfo.address);
                             if (currentAllowance < amountIn) {
-                                addLog(`Approving USDC for ${routerInfo.name}...`);
+                                addLog(`Approving USDC for ${routerInfo.name}`);
                                 const approveTx = await usdc.approve(routerInfo.address, MaxUint256);
                                 await approveTx.wait();
                             }
@@ -664,7 +665,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                                     console.warn(`No Pool Found (Returned 0x0)`);
                                     continue;
                                 }
-                                addLog(`Pool Found: ${routerInfo.name} (${fee}) -> ${poolAddress.substring(0, 10)}...`);
+                                addLog(`Pool Found: ${routerInfo.name} (${fee}) -> ${poolAddress}`);
                             } catch (e) {
                                 console.warn(`Factory Check Failed for ${routerInfo.name}: ${e.message}`);
                             }
@@ -692,20 +693,20 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     }
 
                     if (!success && symbol !== 'MON-USD') {
-                        addLog(`Direct Swap Failed. Trying Smart Multihop...`);
+                        addLog(`Direct Swap Failed. Trying Smart Multihop`);
                         const INTERMEDIARIES = [TOKENS.WMON, TOKENS.ETH];
 
                         // Iterate through ALL Routers for Multihop too (Pancake & Uniswap)
                         for (const routerInfo of ROUTERS) {
                             if (success) break;
                             const currentRouter = new Contract(routerInfo.address, ROUTER_ABI, signer);
-                            addLog(`Checking Multihop via ${routerInfo.name}...`);
+                            addLog(`Checking Multihop via ${routerInfo.name}`);
 
                             // Checks allowance for THIS router first
                             try {
                                 const currentAllowance = await usdc.allowance(signer.address, routerInfo.address);
                                 if (currentAllowance < amountIn) {
-                                    addLog(`Approving USDC for ${routerInfo.name} (Multihop)...`);
+                                    addLog(`Approving USDC for ${routerInfo.name} (Multihop)`);
                                     const approveTx = await usdc.approve(routerInfo.address, MaxUint256);
                                     await approveTx.wait();
                                 }
@@ -756,14 +757,14 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     }
 
                     if (!success && symbol !== 'MON-USD') {
-                        addLog(`V3 Execution Failed. Checking V2 Liquidity...`);
+                        addLog(`V3 Execution Failed. Checking V2 Liquidity`);
                         try {
                             const v2Factory = new Contract(FACTORY_V2_ADDRESS, ["function getPair(address,address) view returns (address)"], signer);
                             let pairAddress = await v2Factory.getPair(TOKENS.USDC, tokenAddress);
                             let path = [TOKENS.USDC, tokenAddress];
                             // HOP CHECK: IF NO USDC PAIR, TRY WMON or WETH
                             if (pairAddress === "0x0000000000000000000000000000000000000000") {
-                                addLog(`No Direct V2 Pair (USDC). Checking Hops...`);
+                                addLog(`No Direct V2 Pair (USDC). Checking Hops`);
 
                                 // Try USDC -> WETH -> TOKEN
                                 const pairWeth = await v2Factory.getPair(TOKENS.ETH, tokenAddress);
@@ -792,7 +793,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                                 const v2Router = new Contract(ROUTER_V2_ADDRESS, ROUTER_ABI, signer);
                                 const v2Allowance = await usdc.allowance(signer.address, ROUTER_V2_ADDRESS);
                                 if (v2Allowance < amountIn) {
-                                    addLog(`Approving USDC for V2 Router...`);
+                                    addLog(`Approving USDC for V2 Router`);
                                     const txApp = await usdc.approve(ROUTER_V2_ADDRESS, MaxUint256);
                                     await txApp.wait();
                                 }
@@ -818,16 +819,16 @@ export const useMarketEngine = (initialBalance = 1000) => {
                 const isXaut = symbol.toUpperCase().includes('XAUT');
 
                 if (isXaut) {
-                    addLog(`SPECIAL ROUTING ENGAGED for XAUT SELL...`);
+                    addLog(`SPECIAL ROUTING ENGAGED for XAUT SELL`);
                     if (tokenBalance == 0) {
-                        addLog(`Zero On-Chain Balance. Closing Simulated Position...`);
+                        addLog(`Zero On-Chain Balance. Closing Simulated Position`);
                         triggerSimulatedSuccess(symbol, 'SELL', currentPrice, 0);
                         return;
                     }
 
                     const xautAllowance = await tContract.allowance(signer.address, ROUTER_V3_02);
                     if (xautAllowance < tokenBalance) {
-                        addLog(`Approving XAUT for SwapRouter02...`);
+                        addLog(`Approving XAUT for SwapRouter02`);
                         const txApp = await tContract.approve(ROUTER_V3_02, MaxUint256);
                         await txApp.wait();
                     }
@@ -853,7 +854,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     if (!uSuccess) {
                         const pAllowance = await tContract.allowance(signer.address, ROUTER_ADDRESS);
                         if (pAllowance < tokenBalance) {
-                            addLog(`Approving XAUT for Pancake V3...`);
+                            addLog(`Approving XAUT for Pancake V3`);
                             const txApp = await tContract.approve(ROUTER_ADDRESS, MaxUint256);
                             await txApp.wait();
                         }
@@ -876,10 +877,10 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     const aUsdContract = new Contract(TOKENS.aUSD, ERC20_ABI, signer);
                     const aUsdBalance = await aUsdContract.balanceOf(signer.address);
                     if (aUsdBalance > 0) {
-                        addLog(`Converting aUSD -> USDC...`);
+                        addLog(`Converting aUSD -> USDC`);
                         const aUsdAllowance = await aUsdContract.allowance(signer.address, ROUTER_ADDRESS);
                         if (aUsdAllowance < aUsdBalance) {
-                            addLog(`Approving aUSD for Pancake...`);
+                            addLog(`Approving aUSD for Pancake`);
                             const txApp = await aUsdContract.approve(ROUTER_ADDRESS, MaxUint256);
                             await txApp.wait();
                         }
@@ -901,10 +902,10 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     // --- XAUT SELL STATE UPDATE ---
 
                     if (tx) {
-                        addLog(`Tx Sent: ${tx.hash.substring(0, 12)}...`);
+                        addLog(`Tx Sent: ${tx.hash}`);
                         addToast("SELL Order Submitted", "info", tx.hash);
                         await tx.wait();
-                        addLog(`SELL Confirmed: ${tx.hash.substring(0, 12)}`);
+                        addLog(`SELL Confirmed: ${tx.hash}`);
                         addToast("SELL Confirmed", "success", tx.hash);
 
                         const posIdx = wallet.positions.findIndex(p => p.symbol === symbol);
@@ -927,7 +928,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
                 } else {
                     if (tokenBalance == 0) {
                         if (wallet.positions.some(p => p.symbol === symbol)) {
-                            addLog(`Zero On-Chain Balance. Closing Simulated Position...`);
+                            addLog(`Zero On-Chain Balance. Closing Simulated Position`);
                             triggerSimulatedSuccess(symbol, 'SELL', currentPrice, 0);
                             return;
                         }
@@ -936,12 +937,12 @@ export const useMarketEngine = (initialBalance = 1000) => {
 
                     const allowance = await tContract.allowance(signer.address, ROUTER_ADDRESS);
                     if (allowance < tokenBalance) {
-                        addLog(`Approving ${symbol}...`);
+                        addLog(`Approving ${symbol}`);
                         const approveTx = await tContract.approve(ROUTER_ADDRESS, MaxUint256);
                         await approveTx.wait();
                     }
 
-                    addLog(`SELLING ${symbol}...`);
+                    addLog(`SELLING ${symbol}`);
                     // Added 2500 (0.25%) for PancakeSwap specific tier
                     const FEES = [3000, 2500, 500, 10000, 100];
                     let success = false;
@@ -961,20 +962,20 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     }
 
                     if (!success && symbol !== 'MON-USD') {
-                        addLog(`Direct Sell Failed. Trying Smart Multihop...`);
+                        addLog(`Direct Sell Failed. Trying Smart Multihop`);
                         const INTERMEDIARIES = [TOKENS.WMON, TOKENS.ETH];
                         const ROUTERS = [{ name: "PancakeSwap V3", address: ROUTER_ADDRESS }, { name: "Uniswap V3", address: ROUTER_V3_02 }];
 
                         for (const routerInfo of ROUTERS) {
                             if (success) break;
                             const currentRouter = new Contract(routerInfo.address, ROUTER_ABI, signer);
-                            addLog(`Checking Sell Multihop via ${routerInfo.name}...`);
+                            addLog(`Checking Sell Multihop via ${routerInfo.name}`);
 
                             // Check allowance for THIS router (Target -> Router)
                             try {
                                 const currentAllowance = await tContract.allowance(signer.address, routerInfo.address);
                                 if (currentAllowance < tokenBalance) {
-                                    addLog(`Approving ${symbol} for ${routerInfo.name}...`);
+                                    addLog(`Approving ${symbol} for ${routerInfo.name}`);
                                     const approveTx = await tContract.approve(routerInfo.address, MaxUint256);
                                     await approveTx.wait();
                                 }
@@ -1023,10 +1024,10 @@ export const useMarketEngine = (initialBalance = 1000) => {
                     if (!success) throw new Error("No Liquidity Pool Found (Both Direct & Multihop Failed)");
 
                     if (tx) {
-                        addLog(`Tx Sent: ${tx.hash.substring(0, 12)}...`);
+                        addLog(`Tx Sent: ${tx.hash}`);
                         addToast("Order Submitted (On-Chain)", "info", tx.hash);
                         await tx.wait();
-                        addLog(`Trade Confirmed: ${tx.hash.substring(0, 12)}`);
+                        addLog(`Trade Confirmed: ${tx.hash}`);
                         addToast("Trade Confirmed", "success", tx.hash);
 
                         const posIdx = wallet.positions.findIndex(p => p.symbol === symbol);

@@ -258,6 +258,22 @@ const CustomChart = ({ symbol, position, currentPrice, candlesData, smaData, mar
 
     }, [position, tradePlan, chartReady]);
 
+    // --- LIVE CANDLE UPDATE ---
+    useEffect(() => {
+        if (!chartReady || !candlestickSeriesRef.current || !candlesData || candlesData.length === 0) return;
+
+        const lastCandle = candlesData[candlesData.length - 1];
+        if (lastCandle) {
+            const updatedCandle = {
+                ...lastCandle,
+                close: currentPrice,
+                high: Math.max(lastCandle.high, currentPrice),
+                low: Math.min(lastCandle.low, currentPrice)
+            };
+            candlestickSeriesRef.current.update(updatedCandle);
+        }
+    }, [currentPrice, chartReady, candlesData]);
+
     useEffect(() => {
         if (!candlestickSeriesRef.current) return;
         if (markers) {
@@ -304,32 +320,7 @@ const CustomChart = ({ symbol, position, currentPrice, candlesData, smaData, mar
                 )}
             </div>
 
-            {/* Position Info - NOW USING LIVE CALCULATED PNL */}
-            {position && (
-                <div className="p-3 border-t border-gray-800 bg-black/20">
-                    <div className="grid grid-cols-4 gap-4 text-xs">
-                        <div>
-                            <div className="text-gray-500">Entry</div>
-                            <div className="text-white font-mono">${formatPrice(entryPriceDisplay)}</div>
-                        </div>
-                        <div>
-                            <div className="text-gray-500">Current</div>
-                            <div className="text-white font-mono">${formatPrice(currentPrice)}</div>
-                        </div>
-                        <div>
-                            <div className="text-gray-500">PnL</div>
-                            {/* HERE IS THE FIX: Using variables livePnL and livePnLPercent */}
-                            <div className={`font-mono font-bold ${isWin ? 'text-green-400' : 'text-red-400'}`}>
-                                {isWin ? "+" : ""}${livePnL.toFixed(2)} ({livePnLPercent.toFixed(2)}%)
-                            </div>
-                        </div>
-                        <div>
-                            <div className="text-gray-500">Size</div>
-                            <div className="text-white font-mono">{(parseFloat(position.size || position.amount) || 0).toFixed(4)}</div>
-                        </div>
-                    </div>
-                </div>
-            )}
+
         </div>
     );
 };
