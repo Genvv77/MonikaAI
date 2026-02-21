@@ -1,16 +1,16 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "Backend for the virtual girlfriend app",
-  "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js --ext js"
+    "dev": "nodemon index.js --ext js",
+    "arch-check": "node -e \"const os = require('os'); if (os.platform() === 'darwin' && os.arch() === 'x64') { console.log('🔧 Intel Mac Detected: Forcing x64 ONNX build...'); try { require('child_process').execSync('npm install onnxruntime-node --arch=x64 --platform=darwin', {stdio: 'inherit'}); } catch(e) { console.error('Build failed: ', e.message); } } else { console.log('Architecture OK.'); }\"",
+    "postinstall": "npm run arch-check"
   },
-  "author": "Satyam Shorrf <contact@satyamshorrf@yahoo.com>",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@huggingface/transformers": "^3.8.1",
     "@supabase/supabase-js": "^2.89.0",
     "@vercel/kv": "^3.0.0",
     "axios": "^1.13.4",
@@ -23,6 +23,7 @@
     "fluent-ffmpeg": "^2.1.3",
     "ioredis": "^5.8.2",
     "node-fetch": "^3.3.2",
+    "onnxruntime-node": "^1.21.0",
     "openai": "^4.104.0",
     "technicalindicators": "^3.1.0"
   },

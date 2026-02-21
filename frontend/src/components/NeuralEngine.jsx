@@ -69,7 +69,7 @@ export default function NeuralEngine({ selectedSymbol }) {
                 <div className="w-full flex flex-col items-center border-b border-white/5 pb-2 gap-1">
                     <div className="flex justify-between items-center w-full">
                         <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                            MARKET STRUCTURE <span className="text-gray-700">|</span> <span className="text-white">{displayName}</span>
+                            MARKET_STRUCTURE <span className="text-gray-700">|</span> <span className="text-white">{displayName}</span>
                         </span>
                         {isGoldenCross && (
                             <span className="text-[8px] font-black text-yellow-400 bg-yellow-400/10 border border-yellow-500/30 px-1.5 py-0.5 rounded animate-pulse">

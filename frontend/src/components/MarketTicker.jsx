@@ -31,7 +31,7 @@ export default function MarketTicker({ activeTimeframe = '1D', onSelectCoin, mar
         const data = marketData[symbol];
         if (!data) return 0;
         const key = TF_MAP[activeTimeframe] || 'change1d';
-        return data[key] || 0;
+        return (data[key] ?? parseFloat(data.change)) || 0;
     };
 
     const assets = ['MON-USD', 'BTC-USD', 'ETH-USD', 'CAKE-USD', 'XAUT-USD'];
@@ -58,17 +58,17 @@ export default function MarketTicker({ activeTimeframe = '1D', onSelectCoin, mar
                 let signal = "NEUTRAL";
                 let signalColor = "text-[#5F6FFF]"; // Monad Blue
 
-                if (score >= 55) {
-                    signal = "BUY";
+                if (score >= 52) {
+                    signal = "BULLISH";
                     signalColor = "text-green-400";
                 } else if (score < 40) {
-                    signal = "SELL";
+                    signal = "BEARISH";
                     signalColor = "text-red-400";
                 } else if (score < 48) {
                     signal = "WEAK";
                     signalColor = "text-orange-400";
                 }
-                // 48-54 stays NEUTRAL (Blue)
+                // 48-51 stays NEUTRAL (Blue)
 
                 return (
                     <div

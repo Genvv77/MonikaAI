@@ -132,23 +132,7 @@ export const UI = ({ hidden, ...props }) => {
               <span className="font-bold">Trading Terminal</span>
             </button>
 
-            {/* Hangman */}
-            <button className="flex items-center gap-4 p-4 rounded-2xl bg-gray-50 text-gray-400 border border-gray-100 cursor-not-allowed group">
-              <div className="bg-gray-200 p-2 rounded-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 21h4m-2 0v-14h8v3" />
-                  <circle cx="16" cy="11" r="2" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 13v3" />
-                </svg>
-              </div>
-              <div className="flex-1 text-left">
-                <span className="font-bold block text-sm">Hangman Game</span>
-                <span className="text-[10px] uppercase tracking-wider font-bold">Coming Soon</span>
-              </div>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-gray-300">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
-              </svg>
-            </button>
+            {/* Chat */}
 
             {/* Hot or Not */}
             <button className="flex items-center gap-4 p-4 rounded-2xl bg-gray-50 text-gray-400 border border-gray-100 cursor-not-allowed group">

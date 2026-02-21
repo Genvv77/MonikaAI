@@ -1,12 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { JsonRpcProvider, Contract, Wallet, formatEther, formatUnits, parseUnits, parseEther, MaxUint256, solidityPacked } from 'ethers';
 import { RSI, SMA } from 'technicalindicators';
 
-// ENDPOINTS
+// --- ENDPOINTS & CONSTANTS ---
 const COINBASE_WS = "wss://ws-feed.exchange.coinbase.com";
 const MONAD_RPC = "https://rpc.monad.xyz";
-
-// MONAD MAINNET (OFFICIAL CA)
 const TOKENS = {
     MON: "NATIVE",
     WMON: "0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A", // Mainnet WMON
@@ -14,7 +12,9 @@ const TOKENS = {
     BTC: "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c", // WBTC Mainnet
     ETH: "0xEE8c0E9f1BFFb4Eb878d8f15f368A02a35481242", // WETH Mainnet
     XAUT: "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
-    XAUt: "0x01bFF41798a0BcF287b996046Ca68b395DbC1071", // Alias
+    XAUt: "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+    XAUT0: "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
+    XAUt0: "0x01bFF41798a0BcF287b996046Ca68b395DbC1071",
     CAKE: "0xF59D81cd43f620E722E07f9Cb3f6E41B031017a3",
     aUSD: "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a"
 };
@@ -32,10 +32,10 @@ const FACTORY_V2_ADDRESS = "0x182a927119d56008d921126764bf884221b10f59";
 const ROUTER_ABI = [
     "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
     "function exactInput(tuple(bytes path, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum) params) external payable returns (uint256 amountOut)",
-    "function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable",
     "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline) external returns (uint[] amounts)",
     "function getAmountsOut(uint amountIn, address[] path) view returns (uint[] amounts)",
-    "function getPair(address tokenA, address tokenB) external view returns (address pair)"
+    "function getPair(address tokenA, address tokenB) external view returns (address pair)",
+    "function factory() view returns (address)"
 ];
 
 // ERC20 ABI
@@ -45,338 +45,709 @@ const ERC20_ABI = [
     "function allowance(address owner, address spender) view returns (uint256)"
 ];
 
-const ENCRYPTED_WALLET_KEY = 'power_encrypted_wallet';
 const WALLET_DATA_KEY = 'power_wallet_data';
+const ENCRYPTED_WALLET_KEY = 'power_encrypted_wallet';
 
 export const useMarketEngine = (initialBalance = 1000) => {
     // --- STATE ---
-    const [timeframe, setTimeframe] = useState('1H');
     const [marketStats, setMarketStats] = useState({});
     const [prices, setPrices] = useState({ "BTC-USD": 96500, "ETH-USD": 3200, "CAKE-USD": 1.37, "MON-USD": 0.0185, "XAUT-USD": 2300 });
-    const [changes24h, setChanges24h] = useState({ "BTC-USD": 0, "ETH-USD": 0, "CAKE-USD": 0, "MON-USD": 0, "XAUT-USD": 0 });
-    const [smaValues, setSmaValues] = useState({});
-    const [rsiValues, setRsiValues] = useState({ "BTC-USD": 50, "ETH-USD": 50, "CAKE-USD": 50, "MON-USD": 50, "XAUT-USD": 50 });
-    const [rsiLength, setRsiLength] = useState(21);
-    const [neuralAnalysis, setNeuralAnalysis] = useState({
-        "H1": { rsi: 50, status: "NEUTRAL" }, "H4": { rsi: 50, status: "NEUTRAL" }, "D1": { rsi: 50, status: "NEUTRAL" }, "confluence": false
-    });
-
-    const generateMockCandles = (basePrice, count = 300, interval = 60) => {
-        const now = Math.floor(Date.now() / 1000);
-        const candles = [];
-        let currentPrice = basePrice;
-        for (let i = count; i >= 0; i--) {
-            const time = now - (i * interval);
-            const volatility = basePrice * 0.003 * (interval / 60);
-            const move = (Math.random() - 0.5) * volatility;
-            const open = currentPrice;
-            const close = open + move;
-            const high = Math.max(open, close) + Math.random() * (volatility * 0.5);
-            const low = Math.min(open, close) - Math.random() * (volatility * 0.5);
-            const volume = Math.floor(Math.random() * 1000) + 100;
-            candles.push({ time, open, high, low, close, value: volume });
-            currentPrice = close;
-        }
-        return candles;
-    };
-
-    const [candles, setCandles] = useState(() => {
-        return {
-            'BTC-USD': generateMockCandles(96500), 'ETH-USD': generateMockCandles(3200), 'CAKE-USD': generateMockCandles(1.37), 'MON-USD': generateMockCandles(0.0185), 'XAUT-USD': generateMockCandles(2300)
-        };
-    });
-    const [nativeBalance, setNativeBalance] = useState(0);
-    const aggregators = useRef({});
-    const priceBuffers = useRef({ "BTC-USD": [], "ETH-USD": [], "CAKE-USD": [], "MON-USD": [], "XAUT-USD": [] });
+    const [candles, setCandles] = useState({});
     const [autoPilot, setAutoPilot] = useState(false);
-    const autoPilotRef = useRef(false);
-    useEffect(() => { autoPilotRef.current = autoPilot; }, [autoPilot]);
-    const lastProcessedCandle = useRef(0);
-    const [timeToClose, setTimeToClose] = useState("00:00");
+    const [slippageTolerance, setSlippageTolerance] = useState(0.5); // Integrated Slippage
 
     const [wallet, setWallet] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(WALLET_DATA_KEY)) || { usdc: 0, monGas: 0, positions: [] }; } catch (e) { return { usdc: 0, monGas: 0, positions: [] }; }
+        try {
+            const parsed = JSON.parse(localStorage.getItem(WALLET_DATA_KEY));
+            if (parsed) {
+                return { ...parsed, tradeHistory: parsed.tradeHistory || [] };
+            }
+            return { usdc: 0, monGas: 0, positions: [], tradeHistory: [] };
+        } catch (e) {
+            return { usdc: 0, monGas: 0, positions: [], tradeHistory: [] };
+        }
     });
-    const [usdcBalance, setUsdcBalance] = useState(0);
-    const [walletLocked, setWalletLocked] = useState(true);
+
+    // Core Wallet State
     const [walletAddress, setWalletAddress] = useState(null);
     const [activeWallet, setActiveWallet] = useState(null);
-    const [toasts, setToasts] = useState([]);
-    const [logs, setLogs] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('power_logs')) || ["[SYSTEM] Logs Reset."]; } catch (e) { return ["[SYSTEM] Logs Reset."]; }
-    });
+    const [walletLocked, setWalletLocked] = useState(true);
 
+    // UI State
+    const [logs, setLogs] = useState([]);
+    const [toasts, setToasts] = useState([]);
+    const [changes24h, setChanges24h] = useState({ "BTC-USD": 0, "ETH-USD": 0, "CAKE-USD": 0, "MON-USD": 0, "XAUT-USD": 0 });
+    const [rsiValues, setRsiValues] = useState({});
+    const [smaValues, setSmaValues] = useState({});
+    const [nativeBalance, setNativeBalance] = useState(0);
+    const [usdcBalance, setUsdcBalance] = useState(0);
+    const [rawBalances, setRawBalances] = useState({});
+    const [timeframe, setTimeframe] = useState('1H');
+
+    // Refs for safe async access
     const pricesRef = useRef(prices);
     const walletRef = useRef(wallet);
+    const autoPilotRef = useRef(autoPilot);
+    const aggregators = useRef({});
+    const priceBuffers = useRef({ "BTC-USD": [], "ETH-USD": [], "CAKE-USD": [], "MON-USD": [], "XAUT-USD": [] });
+
     useEffect(() => { pricesRef.current = prices; }, [prices]);
     useEffect(() => { walletRef.current = wallet; }, [wallet]);
-    useEffect(() => {
-        localStorage.setItem(WALLET_DATA_KEY, JSON.stringify(wallet));
-        localStorage.setItem('power_logs', JSON.stringify(logs.slice(-50)));
-    }, [wallet, logs]);
+    useEffect(() => { autoPilotRef.current = autoPilot; }, [autoPilot]);
+    useEffect(() => { localStorage.setItem(WALLET_DATA_KEY, JSON.stringify(wallet)); }, [wallet]);
+    useEffect(() => { localStorage.setItem('power_logs', JSON.stringify(logs.slice(-50))); }, [logs]);
 
-    // --- SELF-HEALING: PURGE NAN POSITIONS ---
-    useEffect(() => {
-        setWallet(prev => {
-            if (!prev.positions) return prev;
-            const validPositions = prev.positions.filter(p => {
-                const isValid = !isNaN(parseFloat(p.entry)) && !isNaN(parseFloat(p.size)) && parseFloat(p.size) > 0;
-                if (!isValid) console.warn("🧹 Purged Corrupt Position:", p);
-                return isValid;
-            });
-            return { ...prev, positions: validPositions };
-        });
-    }, []);
+    // --- STRATEGY: FIBONACCI RETRACEMENT ---
+    // 1. Fractal Pivot Detection (Ignores rogue wicks)
+    const findStructuralPivots = (candles) => {
+        let trueSwingHigh = -Infinity;
+        let trueSwingLow = Infinity;
 
-    // HELPERS
-    const addToast = (message, type = 'info', txHash = null) => {
-        const id = Date.now();
-        setToasts(prev => [...prev, { id, message, type, txHash }]);
-        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+        // Skip the last 2 candles because a pivot needs right-side confirmation
+        for (let i = 2; i < candles.length - 2; i++) {
+            const current = candles[i];
+
+            // Pivot High: Higher than 2 candles before AND 2 candles after
+            const isPivotHigh = current.high > candles[i - 1].high && current.high > candles[i - 2].high &&
+                current.high > candles[i + 1].high && current.high > candles[i + 2].high;
+
+            // Pivot Low: Lower than 2 candles before AND 2 candles after
+            const isPivotLow = current.low < candles[i - 1].low && current.low < candles[i - 2].low &&
+                current.low < candles[i + 1].low && current.low < candles[i + 2].low;
+
+            if (isPivotHigh && current.high > trueSwingHigh) trueSwingHigh = current.high;
+            if (isPivotLow && current.low < trueSwingLow) trueSwingLow = current.low;
+        }
+
+        return { trueSwingHigh, trueSwingLow };
     };
-    const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
+
+    // 2. Dynamic Fibonacci Calculation
+    const calculateDynamicFibStrategy = (currentPrice, candles) => {
+        // Failsafe: Fallback if not enough chart data
+        if (!candles || candles.length < 20) {
+            return { tp: currentPrice * 1.02, dca1: currentPrice * 0.98, dca2: currentPrice * 0.95, sl: currentPrice * 0.92, isDynamic: false };
+        }
+
+        // Get true pivots from the recent chart
+        const recentCandles = candles.slice(-50);
+        const { trueSwingHigh, trueSwingLow } = findStructuralPivots(recentCandles);
+
+        // Failsafe: If no valid pivots found in window, use absolute highs/lows
+        const swingHigh = trueSwingHigh !== -Infinity ? trueSwingHigh : Math.max(...recentCandles.map(c => c.high || c.close));
+        const swingLow = trueSwingLow !== Infinity ? trueSwingLow : Math.min(...recentCandles.map(c => c.low || c.close));
+
+        const range = swingHigh - swingLow;
+        if (range === 0) return { tp: currentPrice * 1.02, dca1: currentPrice * 0.98, dca2: currentPrice * 0.95, sl: currentPrice * 0.92, isDynamic: false };
+
+        // Calculate Pro Levels
+        const tpLevel = swingHigh + (range * 0.272);     // 1.272 Extension
+        const dca1Level = swingHigh - (range * 0.382);   // 0.382 Retracement
+        const dca2Level = swingHigh - (range * 0.618);   // 0.618 Golden Pocket
+        const slLevel = swingLow - (swingLow * 0.02);    // Structural break + 2% buffer
+
+        return {
+            tp: Math.max(tpLevel, currentPrice * 1.01),
+            dca1: Math.min(dca1Level, currentPrice * 0.99),
+            dca2: Math.min(dca2Level, currentPrice * 0.97),
+            sl: Math.min(slLevel, currentPrice * 0.95),
+            isDynamic: true
+        };
+    };
+
+    // --- HELPERS ---
     const addLog = (msg) => {
         const time = new Date().toLocaleTimeString([], { hour12: false });
         setLogs(prev => [`[${time}] ${msg}`, ...prev.slice(0, 49)]);
     };
 
-    // --- FETCH DATA (REAL COINBASE FEED + BACKEND BRAIN) ---
-    const fetchTickerStats = async () => {
-        const symbols = ['BTC-USD', 'ETH-USD', 'CAKE-USD', 'MON-USD', 'XAUT-USD'];
-        const PROXY_MAP = { 'XAUT-USD': 'PAXG-USD' };
+    const addToast = (message, type = 'info', txHash = null) => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type, txHash }]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+    };
 
-        const newStats = {}; const changesUpdates = {};
+    const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
-        let backendData = {};
+
+
+    // --- EXECUTION CORE: PRESERVED ROUTING + SLIPPAGE ---
+    const executeTrade = async (symbol, side, amountUSDC) => {
         try {
-            const API_BASE = import.meta.env.DEV ? "http://localhost:3000" : "https://monikaai-production.up.railway.app";
-            const res = await fetch(`${API_BASE}/api/market-status`);
-            backendData = await res.json();
-        } catch (e) {
-            console.warn("Backend Brain Offline");
-        }
+            if (walletLocked || !activeWallet) return addLog("Wallet Locked.");
+            addLog(`EXECUTE: ${side} ${symbol} ($${amountUSDC})`);
+            console.log(`EXECUTE START: ${side} ${symbol}`, { amountUSDC, walletLocked, activeWallet });
 
-        await Promise.all(symbols.map(async (symbol) => {
+            const provider = new JsonRpcProvider(MONAD_RPC);
+            const signer = activeWallet.connect(provider);
+            const currentPrice = pricesRef.current[symbol];
+
+            // Check Gas
+            let balance;
             try {
-                let fetchSymbol = PROXY_MAP[symbol] || symbol;
-                const response = await fetch(`https://api.exchange.coinbase.com/products/${fetchSymbol}/stats`);
+                balance = await provider.getBalance(activeWallet.address);
+                addLog(`Gas Balance: ${parseFloat(formatEther(balance)).toFixed(4)} MON`);
+            } catch (rpcError) {
+                console.warn("Gas check failed. Assuming gas ok.");
+                balance = parseEther("1.0");
+            }
+            if (balance < parseEther("0.01")) {
+                addLog(`Low Gas (< 0.01 MON).`);
+                addToast("Not enough MON for gas", "error");
+                return;
+            }
+
+            // Slippage Config
+            const tokenKey = symbol.replace('-USD', '');
+            const DECIMALS = { 'USDC': 6, 'BTC': 8, 'XAUT': 6, 'ETH': 18, 'WMON': 18, 'CAKE': 18 };
+            const decimals = DECIMALS[tokenKey] || 18;
+            // --- Phase 4: HARDCAPPED SLIPPAGE MODULE ---
+            // Override UI slippage settings to restrict MEV sandwiching
+            const isLiquidAsset = ['BTC', 'ETH', 'MON', 'WMON', 'XAUT'].includes(tokenKey);
+            const hardCap = isLiquidAsset ? 0.5 : 1.5;
+            const effectiveSlippage = Math.min(slippageTolerance, hardCap);
+            const slippageFactor = (100 - effectiveSlippage) / 100;
+
+            if (slippageTolerance > hardCap) {
+                addLog(`⚙️ Slippage auto-capped to ${hardCap}% (Liquid: ${isLiquidAsset}) to prevent MEV bleed.`);
+            }
+
+            const router = new Contract(ROUTER_ADDRESS, ROUTER_ABI, signer);
+            const usdc = new Contract(TOKENS.USDC, ERC20_ABI, signer);
+            let tx;
+            const isXaut = symbol.toUpperCase().includes('XAUT');
+
+            const tokenAddress = TOKENS[tokenKey] || TOKENS[tokenKey.toUpperCase()] || TOKENS[tokenKey.toLowerCase()] || TOKENS[tokenKey.charAt(0).toUpperCase() + tokenKey.slice(1).toLowerCase()];
+            if (!tokenAddress) { addLog(`Token not supported: ${symbol}`); return; }
+
+            let tokenIn, tokenOut, amountIn, amountInDecimals, amountOutDecimals;
+            let tradeSizeUsdc = 0;
+
+            if (side === 'BUY') {
+                tradeSizeUsdc = parseFloat(amountUSDC);
+                if (isNaN(tradeSizeUsdc) || tradeSizeUsdc <= 0) tradeSizeUsdc = (wallet.usdc || 0) * 0.10;
+                if (tradeSizeUsdc < 0.1) tradeSizeUsdc = 0.1;
+
+                if (isXaut && tradeSizeUsdc < 5.0) {
+                    addLog(`XAUt requires a minimum of 5 USDC to route via Kuru (Attempted: $${tradeSizeUsdc.toFixed(2)})`);
+                    addToast("XAUt buy size too small (min $5)", "error");
+                    return;
+                }
+
+                tokenIn = TOKENS.USDC;
+                tokenOut = symbol === 'MON-USD' ? TOKENS.WMON : tokenAddress;
+                amountInDecimals = 6;
+                amountOutDecimals = decimals;
+                amountIn = parseUnits(tradeSizeUsdc.toFixed(6), 6);
+            } else if (side === 'SELL') {
+                const posIdx = wallet.positions.findIndex(p => p.symbol === symbol);
+                if (posIdx === -1) return;
+
+                const targetToken = symbol === 'MON-USD' ? TOKENS.WMON : tokenAddress;
+                const tContract = new Contract(targetToken, ERC20_ABI, signer);
+                amountIn = await tContract.balanceOf(signer.address); // Sell ALL
+                if (amountIn == 0n) {
+                    addLog("No token balance to sell.");
+                    return;
+                }
+
+                tokenIn = targetToken;
+                tokenOut = TOKENS.USDC;
+                amountInDecimals = decimals;
+                amountOutDecimals = 6;
+            }
+
+            // --- KURU FLOW AGGREGATOR INTEGRATION ---
+            addLog(`Fetching Kuru Smart Route...`);
+
+            // 1. Get JWT Auth Token
+            const authRes = await fetch('https://ws.kuru.io/api/generate-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_address: signer.address })
+            });
+            const authData = await authRes.json();
+            if (!authData.token) {
+                addLog("Kuru JWT auth failed."); return;
+            }
+
+            // 2. Get Quote
+            const slippageBps = Math.floor(effectiveSlippage * 100);
+            const quotePayload = {
+                userAddress: signer.address,
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amount: amountIn.toString(),
+                slippageTolerance: slippageBps,
+                autoSlippage: isXaut ? true : false
+            };
+            console.log("KURU REQUEST PAYLOAD:", quotePayload);
+
+            const quoteRes = await fetch('https://ws.kuru.io/api/quote', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authData.token}`
+                },
+                body: JSON.stringify(quotePayload)
+            });
+            const quoteData = await quoteRes.json();
+            console.log("KURU RESPONSE:", quoteData);
+
+            let expectedOutToken = 0;
+            let transactionUsed = false;
+
+            if (quoteData.status === 'success' && quoteData.transaction) {
+                expectedOutToken = parseFloat(formatUnits(quoteData.output, amountOutDecimals));
+                addLog(`Optimal Route Found: Expected ≈ ${expectedOutToken.toFixed(4)} ${side === 'BUY' ? tokenKey : 'USDC'}`);
+
+                // 3. Approvals for Kuru
+                const routerAddress = quoteData.transaction.to;
+                if (tokenIn !== TOKENS.MON && tokenIn !== "NATIVE") {
+                    const inContract = new Contract(tokenIn, ERC20_ABI, signer);
+                    const allowance = await inContract.allowance(signer.address, routerAddress);
+                    if (allowance < amountIn) {
+                        addLog(`Approving token for Kuru Aggregator...`);
+                        let appTx;
+                        let retries = 0;
+                        while (retries < 4) {
+                            try {
+                                appTx = await inContract.approve(routerAddress, MaxUint256);
+                                break;
+                            } catch (err) {
+                                if (err.message && (err.message.includes('limit reached') || err.message.includes('429'))) {
+                                    retries++;
+                                    addLog(`⚠️ RPC Limit Hit (Approval). Retrying in ${retries}s...`);
+                                    await new Promise(r => setTimeout(r, 1000 * retries));
+                                } else throw err;
+                            }
+                        }
+                        if (appTx) await appTx.wait();
+                    }
+                }
+
+                // 4. Execution via Kuru
+                const rawTxData = quoteData.transaction.data || quoteData.transaction.calldata;
+                const txData = {
+                    to: routerAddress,
+                    data: rawTxData.startsWith('0x') ? rawTxData : "0x" + rawTxData,
+                    value: quoteData.transaction.value ? BigInt(quoteData.transaction.value) : 0n
+                };
+
+                try {
+                    const gasEstimate = await provider.estimateGas({ ...txData, from: signer.address });
+                    txData.gasLimit = (gasEstimate * 15n) / 10n; // 50% buffer padding
+                } catch (e) {
+                    console.warn("Gas estimate failed, trying hardcoded limit. Error:", e.message);
+                    txData.gasLimit = 3000000n;
+                }
+
+                let txRetries = 0;
+                while (txRetries < 4) {
+                    try {
+                        tx = await signer.sendTransaction(txData);
+                        break;
+                    } catch (err) {
+                        if (err.message && (err.message.includes('limit reached') || err.message.includes('429') || err.code === 'UNKNOWN_ERROR')) {
+                            txRetries++;
+                            addLog(`RPC Limit Hit (Swap). Retrying in ${txRetries}s...`);
+                            await new Promise(r => setTimeout(r, 1000 * txRetries));
+                        } else throw err;
+                    }
+                }
+
+                if (!tx) throw new Error("Trade failed after retries due to RPC rate limits.");
+                transactionUsed = true;
+            }
+
+            if (!transactionUsed) {
+                addLog(`Trade failed via Aggregator.`);
+                addToast("Trade failed — no route", "error");
+                return;
+            }
+
+            // --- STATE UPDATES & PNL ---
+            addLog(`Tx Sent: ${tx.hash}`);
+            addToast("Order Submitted", "info", tx.hash);
+
+            // Custom Polling to bypass tx.wait() spamming eth_getTransactionByHash
+            let receipt = null;
+            let checks = 0;
+            while (checks < 20) {
+                try {
+                    receipt = await provider.getTransactionReceipt(tx.hash);
+                    if (receipt && receipt.status === 1) break;
+                    if (receipt && receipt.status === 0) throw new Error("Transaction reverted on-chain.");
+                } catch (err) {
+                    if (err.message && (err.message.includes('limit reached') || err.message.includes('429'))) {
+                        addLog(`RPC Limit Hit (Receipt). Delaying check...`);
+                    } else if (err.message.includes('reverted')) {
+                        throw err;
+                    }
+                }
+                checks++;
+                await new Promise(r => setTimeout(r, 3000));
+            }
+            if (!receipt) throw new Error("Transaction confirmation timed out.");
+            addLog(`Trade Confirmed: ${tx.hash}`);
+            addToast("Trade Confirmed", "success", tx.hash);
+
+            if (side === 'BUY') {
+                const fibPlan = calculateDynamicFibStrategy(currentPrice, candles[symbol] || []);
+                setWallet(prev => {
+                    const existingIdx = prev.positions.findIndex(p => p.symbol === symbol);
+                    if (existingIdx !== -1) {
+                        const existing = prev.positions[existingIdx];
+                        const totalSize = existing.size + expectedOutToken;
+                        const avgEntry = ((existing.entry * existing.size) + (currentPrice * expectedOutToken)) / totalSize;
+                        const newPositions = [...prev.positions];
+                        newPositions[existingIdx] = {
+                            ...existing, entry: avgEntry, size: totalSize,
+                            dcaCount: (existing.dcaCount || 0) + 1,
+                            fibPlan, timestamp: Date.now(), txHash: tx.hash
+                        };
+                        return { ...prev, usdc: prev.usdc - tradeSizeUsdc, positions: newPositions };
+                    }
+                    return {
+                        ...prev, usdc: prev.usdc - tradeSizeUsdc,
+                        positions: [...prev.positions, {
+                            symbol, entry: currentPrice, size: expectedOutToken,
+                            fibPlan, timestamp: Date.now(), txHash: tx.hash
+                        }]
+                    };
+                });
+            } else if (side === 'SELL') {
+                setWallet(prev => {
+                    const idx = prev.positions.findIndex(p => p.symbol === symbol);
+                    if (idx === -1) return prev;
+                    const pos = prev.positions[idx];
+                    const newPositions = [...prev.positions];
+                    newPositions.splice(idx, 1);
+                    const pnl = (currentPrice - pos.entry) * pos.size;
+                    return {
+                        ...prev,
+                        usdc: prev.usdc + expectedOutToken, // Token represents USDC output here
+                        positions: newPositions,
+                        tradeHistory: [{
+                            symbol, side: 'SELL', entry: pos.entry, exit: currentPrice,
+                            size: pos.size, pnl, timestamp: Date.now(), txHash: tx.hash
+                        }, ...(prev.tradeHistory || [])].slice(0, 100)
+                    };
+                });
+            }
+        } catch (e) {
+            addLog(`Trade Failed: ${e.message}`);
+            setWalletLocked(false);
+        }
+    };
+
+    // --- EXECUTION LOCKS ---
+    const pendingTradesRef = useRef(new Set());
+    // Critical lock for race conditions: prevents the interval loop from double-buying 
+    // before the wallet state has a chance to update with the new position.
+    const recentEntriesRef = useRef({});
+
+    // --- AUTONOMOUS LOOP: BRAIN + FIB ---
+    useEffect(() => {
+        if (autoPilot && walletAddress) {
+            const nowTime = Date.now();
+
+            // 1. Entry Logic (DUAL BRAIN) — 10% of balance
+            Object.values(marketStats).forEach(async (asset) => {
+                const opinion = (asset.aiOpinion || "NEUTRAL").toUpperCase();
+                const symbol = Object.keys(marketStats).find(key => marketStats[key] === asset);
+
+                if (!symbol || pendingTradesRef.current.has(symbol)) return;
+
+                // Check Cooldown Lock: Don't attempt to enter if we just entered within the last 60 seconds
+                const lastEntryTime = recentEntriesRef.current[symbol] || 0;
+                if (nowTime - lastEntryTime < 60000) return;
+
+                // Mathematical Baseline
+                const isMathBuySignal = (asset.signal || "HOLD") === "BUY";
+
+                // AI Holistic Override (Groq Llama-3.1)
+                const isAIPump = opinion.includes("PUMP");
+                const isAIDump = opinion.includes("DUMP");
+
+                // Execution Decision: AI opinion is absolute law.
+                // If it says PUMP, buy. If it says DUMP, abort. 
+                // If it's FLAT, fall back to the raw math score (BUY signal).
+                let executeBuy = false;
+                if (isAIPump) {
+                    executeBuy = true;
+                } else if (!isAIDump && isMathBuySignal) {
+                    executeBuy = true;
+                }
+
+                if (executeBuy && !wallet.positions.some(p => p.symbol === symbol) && usdcBalance > 0) {
+                    const entrySize = parseFloat((usdcBalance * 0.10).toFixed(2));
+                    if (entrySize >= 0.1) {
+                        // ENGAGE ALL LOCKS IMMEDIATELY
+                        pendingTradesRef.current.add(symbol);
+                        recentEntriesRef.current[symbol] = nowTime;
+
+                        const reasonLog = isAIPump ? 'AI [PUMP] Override' : 'AI [FLAT] Math Approval';
+                        addLog(`DUAL BRAIN ACTION: ${symbol} — ${reasonLog} (Entry: $${entrySize})`);
+
+                        await executeTrade(symbol, 'BUY', entrySize);
+
+                        pendingTradesRef.current.delete(symbol); // Release general lock (but keep cooldown)
+                    }
+                }
+            });
+
+            // 2. Exit Logic (Fibonacci TP/SL)
+            wallet.positions.forEach(async (pos) => {
+                if (!pos.fibPlan || pendingTradesRef.current.has(pos.symbol)) return;
+
+                const currentPrice = pricesRef.current[pos.symbol];
+                if (!currentPrice) return;
+
+                if (currentPrice >= pos.fibPlan.tp) {
+                    pendingTradesRef.current.add(pos.symbol);
+                    addLog(`Fib TP Hit: Selling ${pos.symbol} @ $${currentPrice.toFixed(2)}`);
+                    await executeTrade(pos.symbol, 'SELL', pos.size);
+                    pendingTradesRef.current.delete(pos.symbol);
+                } else if (currentPrice <= pos.fibPlan.sl) {
+                    pendingTradesRef.current.add(pos.symbol);
+                    addLog(`Fib SL Hit: Selling ${pos.symbol} @ $${currentPrice.toFixed(2)}`);
+                    await executeTrade(pos.symbol, 'SELL', pos.size);
+                    pendingTradesRef.current.delete(pos.symbol);
+                }
+                // 3. DCA Logic: 5% of balance at Fibonacci levels (max 2 DCAs per position)
+                else if (pos.dcaCount < 2 && usdcBalance > 0) {
+                    const dcaSize = parseFloat((usdcBalance * 0.05).toFixed(2));
+                    if (dcaSize >= 0.1) {
+                        if (currentPrice <= pos.fibPlan.dca2 && (pos.dcaCount || 0) < 2) {
+                            pendingTradesRef.current.add(pos.symbol);
+                            addLog(`DCA2 Hit: Adding $${dcaSize} to ${pos.symbol} @ $${currentPrice.toFixed(2)}`);
+                            await executeTrade(pos.symbol, 'BUY', dcaSize);
+                            pendingTradesRef.current.delete(pos.symbol);
+                        } else if (currentPrice <= pos.fibPlan.dca1 && (pos.dcaCount || 0) < 1) {
+                            pendingTradesRef.current.add(pos.symbol);
+                            addLog(`DCA1 Hit: Adding $${dcaSize} to ${pos.symbol} @ $${currentPrice.toFixed(2)}`);
+                            await executeTrade(pos.symbol, 'BUY', dcaSize);
+                            pendingTradesRef.current.delete(pos.symbol);
+                        }
+                    }
+                }
+            });
+        }
+    }, [marketStats, autoPilot, walletAddress, wallet.positions, usdcBalance]);
+
+    // --- DATA SYNC (ALL FROM COINBASE) ---
+    const PROXY_MAP = {
+        'XAUT-USD': 'PAXG-USD'
+    };
+    const SYMBOLS = ['BTC-USD', 'ETH-USD', 'CAKE-USD', 'MON-USD', 'XAUT-USD'];
+
+    // FAST: Coinbase price-only update (every 2s, 5 requests = 2.5 req/s, well under 10/s limit)
+    const fetchPrices = async () => {
+        const newStats = {};
+        await Promise.allSettled(SYMBOLS.map(async (symbol) => {
+            try {
+                const proxy = PROXY_MAP[symbol] || symbol;
+                const response = await fetch(`https://api.exchange.coinbase.com/products/${proxy}/stats`);
                 if (response.ok) {
                     const data = await response.json();
                     const last = parseFloat(data.last);
                     const open = parseFloat(data.open);
-                    const change = open ? (((last - open) / open) * 100) : 0;
+                    const change24h = open ? (((last - open) / open) * 100) : 0;
 
-                    const brain = backendData[symbol] || {};
                     newStats[symbol] = {
-                        ...brain, // SPREAD ALL BACKEND DATA (change1h, change4h, etc.)
                         price: last,
-                        change: change.toFixed(2),
-                        high: parseFloat(data.high),
-                        low: parseFloat(data.low),
+                        change: change24h.toFixed(2),
+                        change1d: parseFloat(change24h.toFixed(2)),
                         vol: parseFloat(data.volume).toFixed(2),
-                        score: brain.score || 50,
-                        signal: brain.signal || 'HOLD',
-                        details: brain.details || {}
                     };
-                    changesUpdates[symbol] = change.toFixed(2);
                     setPrices(prev => ({ ...prev, [symbol]: last }));
                 }
-            } catch (e) {
-                console.warn(`Stats Error ${symbol}`, e);
-            }
+            } catch (e) { }
         }));
-        setMarketStats(newStats); setChanges24h(prev => ({ ...prev, ...changesUpdates }));
+        // MERGE: preserve AI data + timeframe changes
+        setMarketStats(prev => {
+            const updated = { ...prev };
+            Object.entries(newStats).forEach(([sym, stats]) => {
+                updated[sym] = { ...(prev[sym] || {}), ...stats };
+            });
+            return updated;
+        });
+    };
+
+    // SLOW: Backend AI brain data (every 10s)
+    const fetchBrainData = async () => {
+        const API_BASE = import.meta.env.DEV ? "http://localhost:3000" : "https://monikaai-production.up.railway.app";
+        try {
+            const res = await fetch(`${API_BASE}/api/market-status`);
+            const backendData = await res.json();
+            setMarketStats(prev => {
+                const updated = { ...prev };
+                SYMBOLS.forEach(sym => {
+                    const brain = backendData[sym] || {};
+                    updated[sym] = {
+                        ...(prev[sym] || {}),
+                        score: brain.score || (prev[sym]?.score || 50),
+                        aiOpinion: brain.aiOpinion || (prev[sym]?.aiOpinion || 'NEUTRAL'),
+                        aiConfidence: brain.aiConfidence || 0,
+                        aiReasoning: brain.aiReasoning || (prev[sym]?.aiReasoning || ''),
+                        signal: brain.signal || (prev[sym]?.signal || 'HOLD'),
+                        details: brain.details || (prev[sym]?.details || {}),
+                    };
+                });
+                return updated;
+            });
+        } catch (e) { }
+    };
+
+    // Fetch real per-timeframe changes from Coinbase candles (staggered to avoid burst)
+    const fetchTimeframeChanges = async () => {
+        const timeframes = [
+            { key: 'change1h', granularity: 300, seconds: 3600 },
+            { key: 'change4h', granularity: 900, seconds: 14400 },
+            { key: 'change1d', granularity: 3600, seconds: 86400 },
+            { key: 'change1w', granularity: 21600, seconds: 604800 },
+            { key: 'change1m', granularity: 86400, seconds: 2592000 },
+        ];
+
+        const allChanges = {};
+        const now = new Date();
+
+        // Stagger: process one symbol at a time to avoid 429 rate limits
+        for (const symbol of SYMBOLS) {
+            const proxy = PROXY_MAP[symbol] || symbol;
+            allChanges[symbol] = {};
+
+            for (const { key, granularity, seconds } of timeframes) {
+                try {
+                    const start = new Date(now.getTime() - (seconds * 1000)).toISOString();
+                    const end = now.toISOString();
+                    const response = await fetch(
+                        `https://api.exchange.coinbase.com/products/${proxy}/candles?granularity=${granularity}&start=${start}&end=${end}`
+                    );
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data && Array.isArray(data) && data.length >= 2) {
+                            data.sort((a, b) => a[0] - b[0]);
+                            const oldestOpen = data[0][3];
+                            const latestClose = data[data.length - 1][4];
+                            const pctChange = oldestOpen ? ((latestClose - oldestOpen) / oldestOpen) * 100 : 0;
+                            allChanges[symbol][key] = parseFloat(pctChange.toFixed(2));
+                        }
+                    } else if (response.status === 429) {
+                        console.warn(`[Rate Limit] Coinbase 429 on timeframe ${key} for ${symbol}`);
+                    }
+                } catch (e) { }
+                // 200ms delay between requests to respect Coinbase 10 req/s limit
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+
+        setMarketStats(prev => {
+            const updated = { ...prev };
+            Object.entries(allChanges).forEach(([symbol, tfChanges]) => {
+                updated[symbol] = { ...(updated[symbol] || {}), ...tfChanges };
+            });
+            return updated;
+        });
     };
 
     const fetchHistory = async (period) => {
-        const symbols = ['BTC-USD', 'ETH-USD', 'CAKE-USD', 'MON-USD', 'XAUT-USD'];
-        const granularityMap = { '1H': 60, '4H': 300, '1D': 900, '1W': 3600, '1M': 21600 };
-        const granularity = granularityMap[period] || 3600;
-        const PROXY_MAP = { 'XAUT-USD': 'PAXG-USD' };
-        const newCandles = {}; const newRsi = {}; const newSma = {};
+        // True Period mapping (how far back in time to look, in seconds)
+        const periodSeconds = {
+            '1H': 3600,         // 1 Hour
+            '4H': 14400,        // 4 Hours
+            '1D': 86400,        // 1 Day
+            '1W': 604800,       // 1 Week
+            '1M': 2592000       // 30 Days
+        };
 
-        await Promise.all(symbols.map(async (symbol) => {
+        // Optimal Granularity for the period (Coinbase limits to 300 candles max per request)
+        const granularityMap = {
+            '1H': 60,           // 1-min candles (60 candles)
+            '4H': 60,           // 1-min candles (240 candles)
+            '1D': 300,          // 5-min candles (288 candles)
+            '1W': 3600,         // 1-hour candles (168 candles)
+            '1M': 21600         // 6-hour candles (120 candles)
+        };
+
+        const secondsAgo = periodSeconds[period] || 86400;
+        const granularity = granularityMap[period] || 300;
+
+        const end = Math.floor(Date.now() / 1000);
+        const start = end - secondsAgo;
+        const newCandles = {};
+
+        // Sequential loop with 200ms delay to prevent 429s on history fetch
+        for (const symbol of SYMBOLS) {
             try {
                 const fetchSymbol = PROXY_MAP[symbol] || symbol;
-                const response = await fetch(`https://api.exchange.coinbase.com/products/${fetchSymbol}/candles?granularity=${granularity}`);
+                const response = await fetch(`https://api.exchange.coinbase.com/products/${fetchSymbol}/candles?granularity=${granularity}&start=${start}&end=${end}`);
                 if (response.ok) {
                     const data = await response.json();
-                    if (!data || !Array.isArray(data)) return;
-
-                    data.sort((a, b) => a[0] - b[0]);
-                    const formattedCandles = data.map(k => ({ time: k[0], open: k[3], high: k[2], low: k[1], close: k[4], value: k[5] })).filter(c => Number.isFinite(c.close));
-                    if (formattedCandles.length > 0) {
-                        newCandles[symbol] = formattedCandles;
-                        if (aggregators.current[symbol]) {
-                            const lastCandle = formattedCandles[formattedCandles.length - 1];
-                            const nowSec = Math.floor(Date.now() / 1000);
-                            const currentIntervalStart = Math.floor(nowSec / granularity) * granularity;
-                            if (lastCandle && lastCandle.time >= currentIntervalStart) {
-                                aggregators.current[symbol].candles = formattedCandles.slice(0, -1);
-                                aggregators.current[symbol].currentCandle = lastCandle;
-                            } else { aggregators.current[symbol].candles = formattedCandles; aggregators.current[symbol].currentCandle = null; }
+                    if (data && Array.isArray(data) && data.length > 0) {
+                        data.sort((a, b) => a[0] - b[0]);
+                        const formattedCandles = data.map(k => ({ time: k[0], open: k[3], high: k[2], low: k[1], close: k[4], value: k[5] })).filter(c => Number.isFinite(c.close));
+                        if (formattedCandles.length > 0) {
+                            newCandles[symbol] = formattedCandles;
                         }
-                        const closes = formattedCandles.map(c => c.close);
-                        priceBuffers.current[symbol] = closes;
-                        if (closes.length >= rsiLength) {
-                            const rsi = RSI.calculate({ values: closes, period: rsiLength });
-                            if (rsi.length > 0) newRsi[symbol] = Math.round(rsi[rsi.length - 1]);
-                        }
-                        if (closes.length >= 20) {
-                            const smaData = SMA.calculate({ values: closes, period: 20 });
-                            newSma[symbol] = smaData.map((val, i) => ({ time: formattedCandles[i + 19].time, value: val }));
-                        }
-
                     }
+                } else if (response.status === 429) {
+                    console.warn(`[Rate Limit] Coinbase 429 on history for ${symbol}`);
                 }
             } catch (error) { }
-        }));
-        setCandles(prev => ({ ...prev, ...newCandles })); setRsiValues(prev => ({ ...prev, ...newRsi })); setSmaValues(prev => ({ ...prev, ...newSma }));
-    };
+            await new Promise(r => setTimeout(r, 200));
+        }
 
-    useEffect(() => {
-        fetchTickerStats();
-        fetchHistory('1H');
-        const tickerInterval = setInterval(() => { fetchTickerStats(); }, 1500);
-        return () => clearInterval(tickerInterval);
-    }, [rsiLength]);
+        setCandles(prev => ({ ...prev, ...newCandles }));
 
-    const changeTimeframe = (newTimeframe) => { setTimeframe(newTimeframe); fetchHistory(newTimeframe); };
-    useEffect(() => { scanMarket('BTC-USD'); }, []);
-
-    // --- NEURAL ENGINE ---
-    const BACKEND_URL = import.meta.env.DEV ? "http://localhost:3000/api/ai-scan" : "https://monikaai-production.up.railway.app/api/ai-scan";
-    async function fetchAIScan(symbol, timeframe) {
-        try {
-            const res = await fetch(BACKEND_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol }) });
-            const data = await res.json(); return data.score;
-        } catch (e) { return 50; }
-    }
-    const scanMarket = async (symbol) => {
-        const strategies = [{ tf: 'H1', gran: 3600 }, { tf: 'H4', gran: 21600 }, { tf: 'D1', gran: 86400 }];
-        let analysis = { ...neuralAnalysis };
-        for (const strat of strategies) {
-            try {
-                const response = await fetch(`https://api.exchange.coinbase.com/products/${symbol}/candles?granularity=${strat.gran}`);
-                if (response.ok) {
-                    const params = await response.json();
-                    const closes = params.map(k => k[4]).reverse();
-                    let rsi = 50;
-                    if (closes.length >= rsiLength) {
-                        const rsiSeries = RSI.calculate({ values: closes, period: rsiLength });
-                        rsi = rsiSeries[rsiSeries.length - 1];
-                    }
-                    const aiScore = await fetchAIScan(symbol, strat.tf);
-                    let status = "NEUTRAL";
-                    if (aiScore > 65) status = "BULLISH"; if (aiScore < 35) status = "BEARISH";
-                    analysis[strat.tf] = { rsi: Math.round(rsi), score: Math.round(aiScore), status };
-                    if (strat.tf === 'H1') setRsiValues(prev => ({ ...prev, [symbol]: Math.round(rsi) }));
+        // Compute RSI(14) per symbol from the freshly fetched candles
+        const rsiUpdates = {};
+        Object.entries(newCandles).forEach(([symbol, data]) => {
+            if (data && data.length >= 15) {
+                const closes = data.map(c => c.close);
+                let gains = 0, losses = 0;
+                for (let i = 1; i <= 14; i++) {
+                    const diff = closes[closes.length - i] - closes[closes.length - i - 1];
+                    if (diff > 0) gains += diff; else losses -= diff;
                 }
-            } catch (e) { }
-        }
-        const c1 = analysis.H1.status === "BULLISH"; const c2 = analysis.H4.status === "BULLISH"; const c3 = analysis.D1.status === "BULLISH";
-        analysis.confluence = (c1 && c2) || (c1 && c3) || (c2 && c3);
-        setNeuralAnalysis(analysis);
-        if (analysis.confluence) {
-            const nowSec = Math.floor(Date.now() / 1000); const currentH1ID = Math.floor(nowSec / 3600);
-            if (currentH1ID > lastProcessedCandle.current) {
-                addToast(`CONFIRMED SIGNAL: ${symbol}`, "success");
-                const hasPos = walletRef.current.positions.some(p => p.symbol === symbol);
-                if (autoPilotRef.current && !hasPos) { addLog(`Auto-Pilot Engaging: ${symbol}`); executeTrade(symbol, 'BUY', 0); }
-                lastProcessedCandle.current = currentH1ID;
-            }
-        }
-    };
-
-    const lastScanTime = useRef(0);
-    useEffect(() => {
-        const timerInterval = setInterval(() => {
-            const now = Date.now(); const nowSec = Math.floor(now / 1000); const nextClose = Math.ceil(nowSec / 3600) * 3600; const diff = nextClose - nowSec;
-            const mins = Math.floor(diff / 60); const secs = diff % 60; setTimeToClose(`${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`);
-            if (diff === 5 && autoPilotRef.current) {
-                if (Date.now() - lastScanTime.current > 2000) {
-                    lastScanTime.current = Date.now(); const symbols = Object.keys(pricesRef.current); symbols.forEach(sym => scanMarket(sym));
+                let avgGain = gains / 14;
+                let avgLoss = losses / 14;
+                if (avgLoss === 0) { rsiUpdates[symbol] = 100; }
+                else {
+                    const rs = avgGain / avgLoss;
+                    rsiUpdates[symbol] = parseFloat((100 - (100 / (1 + rs))).toFixed(1));
                 }
             }
-        }, 1000); return () => clearInterval(timerInterval);
+        });
+        setRsiValues(prev => ({ ...prev, ...rsiUpdates }));
+    };
+
+    // Mount: Core intervals (prices + brain) — NOT tied to timeframe
+    useEffect(() => {
+        fetchPrices();
+        fetchBrainData();
+        fetchTimeframeChanges();
+
+        const priceInterval = setInterval(fetchPrices, 2000);
+        const brainInterval = setInterval(fetchBrainData, 10000);
+        const changesInterval = setInterval(fetchTimeframeChanges, 60000);
+
+        return () => {
+            clearInterval(priceInterval);
+            clearInterval(brainInterval);
+            clearInterval(changesInterval);
+        };
     }, []);
 
-    const fetchBalances = async () => {
-        if (!walletAddress || walletLocked) return;
-        try {
-            const provider = new JsonRpcProvider(MONAD_RPC);
-            const monBalance = await provider.getBalance(walletAddress);
-            const monFormatted = parseFloat(formatEther(monBalance));
-            setNativeBalance(monFormatted);
+    // Timeframe effect: fetch chart candles when timeframe changes
+    useEffect(() => {
+        fetchHistory(timeframe);
+        const chartInterval = setInterval(() => fetchHistory(timeframe), 30000);
+        return () => clearInterval(chartInterval);
+    }, [timeframe]);
 
-            const newPositions = [];
-            // Filter aliases and MON
-            const symbols = Object.keys(TOKENS).filter(k => k !== 'MON' && k !== 'XAUt');
-
-            for (const sym of symbols) {
-                const tokenAddress = TOKENS[sym];
-                if (!tokenAddress) continue;
-
-                try {
-                    const contract = new Contract(tokenAddress, ERC20_ABI, provider);
-                    const bal = await contract.balanceOf(walletAddress);
-                    const DECIMALS = { 'USDC': 6, 'BTC': 8, 'WBTC': 8, 'XAUT': 6, 'ETH': 18, 'WETH': 18, 'WMON': 18, 'CAKE': 18, 'aUSD': 18 };
-                    const decimals = DECIMALS[sym] || 18;
-                    const formatted = parseFloat(formatUnits(bal, decimals));
-
-                    if (formatted > 0) {
-                        if (sym === 'USDC') {
-                            setUsdcBalance(formatted);
-                            continue;
-                        }
-                        if (sym === 'aUSD') continue; // Hide aUSD intermediate token
-
-                        // Map symbol to price key
-                        let priceKey = `${sym}-USD`;
-                        if (sym === 'WMON') priceKey = 'MON-USD';
-
-                        // XAUT Fix: Ensure we use the correct key and failover
-                        if (sym === 'XAUT') priceKey = 'XAUT-USD';
-
-                        const currentPrice = pricesRef.current[priceKey] || prices[priceKey] || 0;
-                        const value = formatted * currentPrice;
-
-                        // Only add as position if it has value OR if we have an existing position for it (to preserve entry)
-                        const existingPos = walletRef.current.positions.find(p => p.symbol === priceKey);
-                        const entryPrice = existingPos ? existingPos.entry : (currentPrice > 0 ? currentPrice : 0);
-
-                        // If we have balance but no price, still show it but with 0 value? 
-                        // Better to keep it if we have it.
-                        if (value > 0.001 || formatted > 0) {
-                            newPositions.push({
-                                symbol: priceKey,
-                                size: formatted,
-                                entry: entryPrice, // Keep original entry!
-                                pnl: (currentPrice - entryPrice) * formatted
-                            });
-                        }
-                    }
-                } catch (e) { console.warn(`Failed to fetch balance for ${sym}`); }
-            }
-            // DEBUG XAUT
-            const xautPos = newPositions.find(p => p.symbol === 'XAUT-USD');
-            if (xautPos) {
-                console.log(`XAUT DEBUG: Size=${xautPos.size}, Entry=${xautPos.entry}, PnL=${xautPos.pnl}`);
-            } else {
-                console.log(`XAUT NOT FOUND in newPositions`);
-            }
-
-            console.log("Balances Refreshed:", newPositions);
-            setWallet(prev => ({
-                ...prev,
-                usdc: usdcBalance, // This might be stale if setUsdcBalance hasn't updated native state yet, but likely ok.
-                monGas: monFormatted,
-                positions: newPositions
-            }));
-        } catch (error) { console.error("Balance Scan Error:", error); }
-    };
-    useEffect(() => { if (!walletAddress || walletLocked) return; fetchBalances(); const interval = setInterval(fetchBalances, 11000); return () => clearInterval(interval); }, [walletAddress, walletLocked]);
-
+    // --- WALLET HELPERS ---
     const walletExists = () => !!localStorage.getItem(ENCRYPTED_WALLET_KEY);
 
     const createWallet = async (password) => {
@@ -389,10 +760,7 @@ export const useMarketEngine = (initialBalance = 1000) => {
             setWalletLocked(false);
             addToast("Wallet Created!", "success");
             return { success: true };
-        } catch (e) {
-            addToast("Wallet Creation Failed", "error");
-            return { success: false, error: e.message };
-        }
+        } catch (e) { return { success: false, error: e.message }; }
     };
 
     const unlockWallet = async (password) => {
@@ -405,680 +773,94 @@ export const useMarketEngine = (initialBalance = 1000) => {
             setWalletLocked(false);
             addToast("Wallet Unlocked", "success");
             return { success: true };
-        } catch (e) {
-            addToast("Unlock Failed: Wrong Password?", "error");
-            return { success: false, error: "Incorrect Password" };
-        }
+        } catch (e) { return { success: false, error: "Incorrect Password" }; }
     };
 
     const lockWallet = () => { setActiveWallet(null); setWalletLocked(true); addToast("Wallet Locked", "info"); };
-    const exportPrivateKey = () => { if (activeWallet) return activeWallet.privateKey; return null; };
 
-    // --- EXECUTION CORE ---
-    const executeTrade = async (symbol, side, amountUSDC) => {
+    // Balance Polling
+    const fetchBalances = async () => {
+        if (!walletAddress || walletLocked) return;
         try {
-            addLog(`EXECUTE: ${side} ${symbol} ($${amountUSDC})`);
-            console.log(`EXECUTE START: ${side} ${symbol}`, { amountUSDC, walletLocked, activeWallet });
-
-            if (walletLocked || !activeWallet) { addLog(`Wallet is locked.`); return; }
-
-            addLog(`Checking Gas...`);
             const provider = new JsonRpcProvider(MONAD_RPC);
-            let balance;
-            try {
-                balance = await provider.getBalance(activeWallet.address);
-                addLog(`Gas Balance: ${parseFloat(formatEther(balance)).toFixed(4)} MON`);
-            } catch (rpcError) {
-                console.warn("Gas check failed (RPC probably overloaded). Assuming enough gas.", rpcError);
-                addLog(`Gas Check Failed (RPC Error). Proceeding anyway`);
-                balance = parseEther("1.0");
+            const monBalance = await provider.getBalance(walletAddress);
+            const monFormatted = parseFloat(formatEther(monBalance));
+            setNativeBalance(monFormatted);
+
+            const newPositions = [];
+            const newRawBalances = {};
+            const symbols = Object.keys(TOKENS).filter(k => k !== 'MON' && k !== 'XAUt');
+
+            for (const sym of symbols) {
+                const tokenAddress = TOKENS[sym];
+                if (!tokenAddress) continue;
+                try {
+                    const contract = new Contract(tokenAddress, ERC20_ABI, provider);
+                    const bal = await contract.balanceOf(walletAddress);
+                    const DECIMALS = { 'USDC': 6, 'BTC': 8, 'XAUT': 6, 'ETH': 18, 'WMON': 18, 'CAKE': 18, 'aUSD': 6 };
+                    const decimals = DECIMALS[sym] || 18;
+                    const formatted = parseFloat(formatUnits(bal, decimals));
+
+                    if (formatted > 0) {
+                        newRawBalances[sym] = formatted;
+
+                        if (sym === 'USDC') { setUsdcBalance(formatted); continue; }
+                        if (sym === 'aUSD') continue;
+
+                        let priceKey = `${sym}-USD`;
+                        if (sym === 'WMON') priceKey = 'MON-USD';
+                        if (sym === 'XAUT') priceKey = 'XAUT-USD';
+
+                        const currentPrice = pricesRef.current[priceKey] || prices[priceKey] || 0;
+                        const value = formatted * currentPrice;
+
+                        // Ignore dust (less than $0.05 value)
+                        if (value > 0.05) {
+                            // Preserve existing entry/fibPlan if matching position exists
+                            const existingPos = walletRef.current.positions.find(p => p.symbol === priceKey);
+                            const entryPrice = existingPos ? existingPos.entry : (currentPrice > 0 ? currentPrice : 0);
+                            let fibPlan = existingPos?.fibPlan;
+                            if (!fibPlan || !fibPlan.isDynamic) {
+                                fibPlan = calculateDynamicFibStrategy(entryPrice, candles[priceKey] || []);
+                            }
+
+                            newPositions.push({
+                                symbol: priceKey, size: formatted, entry: entryPrice,
+                                pnl: (currentPrice - entryPrice) * formatted,
+                                fibPlan: fibPlan // CRITICAL for persistence
+                            });
+                        }
+                    }
+                } catch (e) { }
+                await new Promise(r => setTimeout(r, 200)); // Stagger RPC calls to prevent 429
             }
+            setRawBalances(newRawBalances);
+            setWallet(prev => ({
+                ...prev, usdc: usdcBalance, monGas: monFormatted, positions: newPositions
+            }));
+        } catch (error) { }
+    };
+    useEffect(() => { if (!walletAddress || walletLocked) return; fetchBalances(); const interval = setInterval(fetchBalances, 11000); return () => clearInterval(interval); }, [walletAddress, walletLocked]);
 
-            const minGas = parseEther("0.01");
-            if (balance < minGas) {
-                addLog(`Low Gas (< 0.01 MON).`);
-                addToast("Not enough MON for gas", "error");
-                return;
-            }
-
-            let tradeSize = parseFloat(amountUSDC);
-            if (isNaN(tradeSize) || tradeSize <= 0) { tradeSize = (wallet.usdc || 0) * 0.10; }
-            if (tradeSize < 0.1) tradeSize = 0.1;
-
-            let currentPrice = parseFloat(pricesRef.current[symbol]);
-            if (isNaN(currentPrice) || currentPrice <= 0) {
-                currentPrice = symbol.includes("MON") ? 0.0186 : 1000;
-                console.warn(`PRICE FALLBACK TRIGGERED: ${currentPrice}`);
-            }
-
-            const tokenKey = symbol.replace('-USD', '');
-            const tokenAddress = TOKENS[tokenKey] || TOKENS[tokenKey.toUpperCase()] || TOKENS[tokenKey.toLowerCase()] || TOKENS[tokenKey.charAt(0).toUpperCase() + tokenKey.slice(1).toLowerCase()];
-            if (!tokenAddress) { addLog(`Token not supported: ${symbol} (${tokenKey})`); return; }
-
-            const triggerSimulatedSuccess = (simSymbol, simSide, simPrice, simAmount) => {
-                addLog(`Chain Busy. Switching to Hybrid Execution (Simulation)`);
-                setTimeout(() => {
-                    const txHash = "0xsimulated_" + Date.now();
-                    addLog(`Tx Sent: ${txHash}`);
-                    addToast("Order Executed (Hybrid)", "success", txHash);
-
-                    if (simSide === 'BUY') {
-                        const size = simAmount / simPrice;
-                        setWallet(prev => ({
-                            ...prev, usdc: Math.max(0, prev.usdc - simAmount),
-                            positions: [...prev.positions, {
-                                symbol: simSymbol, entry: simPrice, size: size, pnl: 0, pnlPercent: "0.00",
-                                timestamp: Date.now(), txHash, highestPrice: simPrice, dcaCount: 0
-                            }]
-                        }));
-                    } else {
-                        const posIdx = walletRef.current.positions.findIndex(p => p.symbol === simSymbol);
-                        if (posIdx !== -1) {
-                            const pos = walletRef.current.positions[posIdx];
-                            const newPositions = [...walletRef.current.positions];
-                            newPositions.splice(posIdx, 1);
-                            const value = pos.size * simPrice;
-                            const profit = value - (pos.size * pos.entry);
-                            addLog(`PnL: $${profit.toFixed(2)}`);
-                            setWallet(prev => ({
-                                ...prev, usdc: prev.usdc + value, positions: newPositions,
-                                history: [{ symbol: simSymbol, side: 'SELL', entry: pos.entry, exit: simPrice, size: pos.size, pnl: profit, timestamp: Date.now(), txHash }, ...(prev.history || [])].slice(0, 100)
-                            }));
-                        }
-                    }
-                }, 1000);
-            };
-
-            const signer = activeWallet.connect(provider);
-            const router = new Contract(ROUTER_ADDRESS, ROUTER_ABI, signer);
-            const usdc = new Contract(TOKENS.USDC, ERC20_ABI, signer);
-            let tx;
-
-            if (side === 'BUY') {
-                const amountIn = parseUnits(tradeSize.toFixed(6), 6);
-                const isXaut = symbol.toUpperCase().includes('XAUT');
-
-                if (isXaut) {
-                    addLog(`SPECIAL ROUTING ENGAGED for XAUT`);
-                    const aUsdContract = new Contract(TOKENS.aUSD, ERC20_ABI, signer);
-                    const aUsdBalance = await aUsdContract.balanceOf(signer.address);
-
-                    if (aUsdBalance < amountIn) {
-                        addLog(`Insufficient aUSD. Auto-Converting USDC -> aUSD`);
-                        const usdcAllowance = await usdc.allowance(signer.address, ROUTER_ADDRESS);
-                        if (usdcAllowance < amountIn) {
-                            addLog(`Approving USDC for Pancake`);
-                            const txApp = await usdc.approve(ROUTER_ADDRESS, MaxUint256);
-                            await txApp.wait();
-                        }
-                        addLog(`Swapping USDC -> aUSD`);
-                        let swapSuccess = false;
-                        const FEES = [100, 500, 3000];
-                        for (const fee of FEES) {
-                            try {
-                                const swapParams = {
-                                    tokenIn: TOKENS.USDC, tokenOut: TOKENS.aUSD,
-                                    fee: fee,
-                                    recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                    amountIn: amountIn, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                                };
-                                const txSwap = await router.exactInputSingle(swapParams);
-                                addLog(`USDC -> aUSD Sent: ${txSwap.hash}`);
-                                await txSwap.wait();
-                                addLog(`aUSD Acquired.`);
-                                swapSuccess = true;
-                                break;
-                            } catch (e) { console.warn(`USDC->aUSD fee ${fee} failed.`); }
-                        }
-                        if (!swapSuccess) throw new Error("Failed to acquire aUSD (Base Asset for XAUT)");
-                    }
-
-                    addLog(`Executing aUSD -> XAUT via Uniswap V3 (SwapRouter02)`);
-                    const v3Router = new Contract(ROUTER_V3_02, ROUTER_ABI, signer);
-                    const currentBalance = await aUsdContract.balanceOf(signer.address);
-                    const aUsdAllowance = await aUsdContract.allowance(signer.address, ROUTER_V3_02);
-                    if (aUsdAllowance < currentBalance) {
-                        addLog(`Approving aUSD for SwapRouter02`);
-                        const txApp = await aUsdContract.approve(ROUTER_V3_02, MaxUint256);
-                        await txApp.wait();
-                    }
-
-                    const U_FEES = [3000, 500, 10000];
-                    let uSuccess = false;
-                    for (const fee of U_FEES) {
-                        try {
-                            const params = {
-                                tokenIn: TOKENS.aUSD, tokenOut: TOKENS.XAUT,
-                                fee: fee,
-                                recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                amountIn: currentBalance, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                            };
-                            const gasEstimate = await v3Router.exactInputSingle.estimateGas(params);
-                            tx = await v3Router.exactInputSingle(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                            uSuccess = true;
-                            break;
-                        } catch (e) { console.warn(`SWAPROUTER02 FEE ${fee} FAILED: ${e.message}`); }
-                    }
-
-                    if (!uSuccess) {
-                        console.warn("SwapRouter02 Failed. Attempting Fallback to Pancake V3...");
-                        const pAllowance = await aUsdContract.allowance(signer.address, ROUTER_ADDRESS);
-                        if (pAllowance < amountIn) {
-                            addLog(`Approving aUSD for Pancake V3`);
-                            const txApp = await aUsdContract.approve(ROUTER_ADDRESS, MaxUint256);
-                            await txApp.wait();
-                        }
-                        let pSuccess = false;
-                        // DIRECT SWAP LOOP
-                        // Added 2500 (0.25%) for PancakeSwap specific tier
-                        const FEES = [3000, 2500, 500, 10000, 100];
-                        for (const fee of FEES) {
-                            try {
-                                const params = {
-                                    tokenIn: TOKENS.aUSD, tokenOut: TOKENS.XAUT,
-                                    fee: fee,
-                                    recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                    amountIn: currentBalance, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                                };
-                                const gasEstimate = await router.exactInputSingle.estimateGas(params);
-                                tx = await router.exactInputSingle(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                                pSuccess = true;
-                                break;
-                            } catch (e) { console.warn(`PANCAKE FEE ${fee} FAILED: ${e.message}`); }
-                        }
-
-                        if (!pSuccess) {
-                            console.warn("Pancake V3 Failed. Checking V2 Factory...");
-                            try {
-                                const v2Factory = new Contract(FACTORY_V2_ADDRESS, ["function getPair(address,address) view returns (address)"], signer);
-                                const pairAddress = await v2Factory.getPair(TOKENS.aUSD, TOKENS.XAUT);
-                                if (pairAddress && pairAddress !== "0x0000000000000000000000000000000000000000") {
-                                    const v2Router = new Contract(ROUTER_V2_ADDRESS, ROUTER_ABI, signer);
-                                    const v2Allowance = await aUsdContract.allowance(signer.address, ROUTER_V2_ADDRESS);
-                                    if (v2Allowance < amountIn) {
-                                        addLog(`Approving aUSD for V2 Router`);
-                                        const txApp = await aUsdContract.approve(ROUTER_V2_ADDRESS, MaxUint256);
-                                        await txApp.wait();
-                                    }
-                                    const path = [TOKENS.aUSD, TOKENS.XAUT];
-                                    const amountsOut = await v2Router.getAmountsOut(amountIn, path);
-                                    const amountOutMin = (amountsOut[1] * 90n) / 100n;
-                                    tx = await v2Router.swapExactTokensForTokens(
-                                        amountIn, amountOutMin, path, signer.address, Math.floor(Date.now() / 1000) + 600
-                                    );
-                                } else { throw new Error("V2 Pair Not Found"); }
-                            } catch (e) { throw new Error("XAUT Execution Failed (SwapRouter02, Pancake V3, & V2)"); }
-                        }
-                    }
-
-                    // --- XAUT STATE UPDATE ---
-                    addLog(`Tx Sent: ${tx.hash}`);
-                    addToast("Order Submitted (On-Chain)", "info", tx.hash);
-                    await tx.wait();
-                    addLog(`Trade Confirmed: ${tx.hash}`);
-                    addToast("Trade Confirmed", "success", tx.hash);
-
-                    const entryPrice = pricesRef.current[symbol] || 0;
-                    setWallet(prev => ({
-                        ...prev,
-                        usdc: prev.usdc - tradeSize,
-                        positions: [
-                            ...(prev.positions || []),
-                            { symbol, entry: entryPrice, size: tradeSize / entryPrice, pnl: 0 }
-                        ],
-                        history: [{
-                            symbol, side: 'BUY', entry: entryPrice, exit: 0, size: tradeSize / entryPrice, pnl: 0, timestamp: Date.now(), txHash: tx.hash
-                        }, ...(prev.history || [])].slice(0, 100)
-                    }));
-                    return; // Exit XAUT Block
-                } else {
-                    const targetToken = symbol === 'MON-USD' ? TOKENS.WMON : tokenAddress;
-                    addLog(`Swapping USDC for ${symbol} (V3)`);
-                    const ROUTERS = [{ name: "PancakeSwap V3", address: ROUTER_ADDRESS }, { name: "Uniswap V3", address: ROUTER_V3_02 }];
-                    const FEES = [3000, 2500, 500, 10000, 100];
-                    let success = false;
-
-                    for (const routerInfo of ROUTERS) {
-                        if (success) break;
-                        const currentRouter = new Contract(routerInfo.address, ROUTER_ABI, signer);
-                        try {
-                            const currentAllowance = await usdc.allowance(signer.address, routerInfo.address);
-                            if (currentAllowance < amountIn) {
-                                addLog(`Approving USDC for ${routerInfo.name}`);
-                                const approveTx = await usdc.approve(routerInfo.address, MaxUint256);
-                                await approveTx.wait();
-                            }
-                        } catch (e) { addLog(`Approval Check Failed: ${e.message}`); }
-
-                        for (const fee of FEES) {
-                            // Check Pool Existence First
-                            try {
-                                const currentRouter = new Contract(routerInfo.address, [...ROUTER_ABI, "function factory() view returns (address)"], signer);
-                                const factoryAddress = await currentRouter.factory();
-                                const factory = new Contract(factoryAddress, ["function getPool(address,address,uint24) view returns (address)"], signer);
-
-                                console.log(`Checking Pool for ${symbol} on ${routerInfo.name} (${fee})...`);
-                                console.log(`USDC: ${TOKENS.USDC}`);
-                                console.log(`Target: ${targetToken}`);
-                                const poolAddress = await factory.getPool(TOKENS.USDC, targetToken, fee);
-
-                                if (poolAddress === "0x0000000000000000000000000000000000000000") {
-                                    console.warn(`No Pool Found (Returned 0x0)`);
-                                    continue;
-                                }
-                                addLog(`Pool Found: ${routerInfo.name} (${fee}) -> ${poolAddress}`);
-                            } catch (e) {
-                                console.warn(`Factory Check Failed for ${routerInfo.name}: ${e.message}`);
-                            }
-
-                            try {
-                                const currentRouter = new Contract(routerInfo.address, ROUTER_ABI, signer);
-                                const params = {
-                                    tokenIn: TOKENS.USDC, tokenOut: targetToken,
-                                    fee: fee,
-                                    recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                    amountIn: amountIn, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                                };
-
-                                const gasEstimate = await currentRouter.exactInputSingle.estimateGas(params);
-                                console.log(`ESTIMATE SUCCESS (${routerInfo.name} ${fee}): ${gasEstimate}`);
-                                tx = await currentRouter.exactInputSingle(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                                success = true;
-                                addLog(`Executing Direct Swap via ${routerInfo.name}`);
-                                break;
-                            } catch (e) {
-                                const errMsg = e.message.substring(0, 50);
-                                console.warn(`${routerInfo.name} Fee: ${fee} FAILED: ${e.message}`);
-                            }
-                        }
-                    }
-
-                    if (!success && symbol !== 'MON-USD') {
-                        addLog(`Direct Swap Failed. Trying Smart Multihop`);
-                        const INTERMEDIARIES = [TOKENS.WMON, TOKENS.ETH];
-
-                        // Iterate through ALL Routers for Multihop too (Pancake & Uniswap)
-                        for (const routerInfo of ROUTERS) {
-                            if (success) break;
-                            const currentRouter = new Contract(routerInfo.address, ROUTER_ABI, signer);
-                            addLog(`Checking Multihop via ${routerInfo.name}`);
-
-                            // Checks allowance for THIS router first
-                            try {
-                                const currentAllowance = await usdc.allowance(signer.address, routerInfo.address);
-                                if (currentAllowance < amountIn) {
-                                    addLog(`Approving USDC for ${routerInfo.name} (Multihop)`);
-                                    const approveTx = await usdc.approve(routerInfo.address, MaxUint256);
-                                    await approveTx.wait();
-                                }
-                            } catch (e) {
-                                console.warn(`Approval check failed for ${routerInfo.name}: ${e.message}`);
-                            }
-
-                            for (const midToken of INTERMEDIARIES) {
-                                const midName = midToken === TOKENS.WMON ? "WMON" : "WETH";
-                                if (midToken === targetToken) continue;
-
-                                console.log(`INITIATING MULTIHOP VIA ${midName} on ${routerInfo.name}...`);
-
-                                // Extended Fee Combos: [USDC-Mid Fee, Mid-Target Fee]
-                                const PATH_FEES = [
-                                    [3000, 3000], [500, 3000], [100, 3000],        // Standard Target
-                                    [3000, 10000], [500, 10000], [100, 10000],     // Volatile Target
-                                    [3000, 500], [500, 500], [100, 500],           // Stable Target
-                                    [3000, 100], [500, 100], [100, 100]            // Ultra-Stable Target
-                                ];
-
-                                for (const [fee1, fee2] of PATH_FEES) {
-                                    try {
-                                        const path = solidityPacked(
-                                            ["address", "uint24", "address", "uint24", "address"],
-                                            [TOKENS.USDC, fee1, midToken, fee2, targetToken]
-                                        );
-
-                                        const params = {
-                                            path: path,
-                                            recipient: signer.address,
-                                            deadline: Math.floor(Date.now() / 1000) + 600,
-                                            amountIn: amountIn,
-                                            amountOutMinimum: 0
-                                        };
-
-                                        const gasEstimate = await currentRouter.exactInput.estimateGas(params);
-                                        console.log(`MULTIHOP ESTIMATE SUCCESS (${midName} ${fee1}/${fee2}): ${gasEstimate}`);
-                                        tx = await currentRouter.exactInput(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                                        success = true;
-                                        addLog(`Executing Multihop via ${routerInfo.name}`);
-                                        break;
-                                    } catch (e) { }
-                                }
-                                if (success) break;
-                            }
-                        }
-                    }
-
-                    if (!success && symbol !== 'MON-USD') {
-                        addLog(`V3 Execution Failed. Checking V2 Liquidity`);
-                        try {
-                            const v2Factory = new Contract(FACTORY_V2_ADDRESS, ["function getPair(address,address) view returns (address)"], signer);
-                            let pairAddress = await v2Factory.getPair(TOKENS.USDC, tokenAddress);
-                            let path = [TOKENS.USDC, tokenAddress];
-                            // HOP CHECK: IF NO USDC PAIR, TRY WMON or WETH
-                            if (pairAddress === "0x0000000000000000000000000000000000000000") {
-                                addLog(`No Direct V2 Pair (USDC). Checking Hops`);
-
-                                // Try USDC -> WETH -> TOKEN
-                                const pairWeth = await v2Factory.getPair(TOKENS.ETH, tokenAddress);
-                                const pairUsdcWeth = await v2Factory.getPair(TOKENS.USDC, TOKENS.ETH);
-
-                                if (pairWeth !== "0x0000000000000000000000000000000000000000" &&
-                                    pairUsdcWeth !== "0x0000000000000000000000000000000000000000") {
-                                    pairAddress = pairWeth; // Target pair confirmation
-                                    path = [TOKENS.USDC, TOKENS.ETH, tokenAddress];
-                                    addLog(`V2 HOP FOUND: USDC -> WETH -> ${symbol}`);
-                                } else {
-                                    // Try USDC -> WMON -> TOKEN
-                                    const pairMon = await v2Factory.getPair(TOKENS.WMON, tokenAddress);
-                                    const pairUsdcMon = await v2Factory.getPair(TOKENS.USDC, TOKENS.WMON);
-
-                                    if (pairMon !== "0x0000000000000000000000000000000000000000" &&
-                                        pairUsdcMon !== "0x0000000000000000000000000000000000000000") {
-                                        pairAddress = pairMon; // Target pair confirmation
-                                        path = [TOKENS.USDC, TOKENS.WMON, tokenAddress];
-                                        addLog(`V2 HOP FOUND: USDC -> WMON -> ${symbol}`);
-                                    }
-                                }
-                            }
-
-                            if (pairAddress && pairAddress !== "0x0000000000000000000000000000000000000000") {
-                                const v2Router = new Contract(ROUTER_V2_ADDRESS, ROUTER_ABI, signer);
-                                const v2Allowance = await usdc.allowance(signer.address, ROUTER_V2_ADDRESS);
-                                if (v2Allowance < amountIn) {
-                                    addLog(`Approving USDC for V2 Router`);
-                                    const txApp = await usdc.approve(ROUTER_V2_ADDRESS, MaxUint256);
-                                    await txApp.wait();
-                                }
-                                const amountsOut = await v2Router.getAmountsOut(amountIn, path);
-                                const amountOutMin = (amountsOut[amountsOut.length - 1] * 90n) / 100n;
-                                tx = await v2Router.swapExactTokensForTokens(
-                                    amountIn, amountOutMin, path, signer.address, Math.floor(Date.now() / 1000) + 600
-                                );
-                                success = true;
-                            } else { console.warn("No V2 Pair Found either."); }
-                        } catch (e) { console.warn(`V2 ROUTER FAILED: ${e.message}`); }
-                    }
-                    if (!success) throw new Error("No Liquidity Pool Found (V3, Multihop, & V2 Failed)");
-                }
-
-            } else if (side === 'SELL') {
-                const posIdx = wallet.positions.findIndex(p => p.symbol === symbol);
-                if (posIdx === -1) return;
-
-                const targetToken = symbol === 'MON-USD' ? TOKENS.WMON : tokenAddress;
-                const tContract = new Contract(targetToken, ERC20_ABI, signer);
-                const tokenBalance = await tContract.balanceOf(signer.address);
-                const isXaut = symbol.toUpperCase().includes('XAUT');
-
-                if (isXaut) {
-                    addLog(`SPECIAL ROUTING ENGAGED for XAUT SELL`);
-                    if (tokenBalance == 0) {
-                        addLog(`Zero On-Chain Balance. Closing Simulated Position`);
-                        triggerSimulatedSuccess(symbol, 'SELL', currentPrice, 0);
-                        return;
-                    }
-
-                    const xautAllowance = await tContract.allowance(signer.address, ROUTER_V3_02);
-                    if (xautAllowance < tokenBalance) {
-                        addLog(`Approving XAUT for SwapRouter02`);
-                        const txApp = await tContract.approve(ROUTER_V3_02, MaxUint256);
-                        await txApp.wait();
-                    }
-
-                    const v3Router = new Contract(ROUTER_V3_02, ROUTER_ABI, signer);
-                    let uSuccess = false;
-                    const U_FEES = [3000, 500, 10000];
-                    for (const fee of U_FEES) {
-                        try {
-                            const params = {
-                                tokenIn: TOKENS.XAUT, tokenOut: TOKENS.aUSD,
-                                fee: fee,
-                                recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                amountIn: tokenBalance, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                            };
-                            const gasEstimate = await v3Router.exactInputSingle.estimateGas(params);
-                            tx = await v3Router.exactInputSingle(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                            uSuccess = true;
-                            break;
-                        } catch (e) { }
-                    }
-
-                    if (!uSuccess) {
-                        const pAllowance = await tContract.allowance(signer.address, ROUTER_ADDRESS);
-                        if (pAllowance < tokenBalance) {
-                            addLog(`Approving XAUT for Pancake V3`);
-                            const txApp = await tContract.approve(ROUTER_ADDRESS, MaxUint256);
-                            await txApp.wait();
-                        }
-                        for (const fee of U_FEES) {
-                            try {
-                                const params = {
-                                    tokenIn: TOKENS.XAUT, tokenOut: TOKENS.aUSD,
-                                    fee: fee,
-                                    recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                    amountIn: tokenBalance, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                                };
-                                tx = await router.exactInputSingle(params);
-                                break;
-                            } catch (e) { }
-                        }
-                    }
-                    await tx.wait();
-                    addLog(`XAUT -> aUSD Complete.`);
-
-                    const aUsdContract = new Contract(TOKENS.aUSD, ERC20_ABI, signer);
-                    const aUsdBalance = await aUsdContract.balanceOf(signer.address);
-                    if (aUsdBalance > 0) {
-                        addLog(`Converting aUSD -> USDC`);
-                        const aUsdAllowance = await aUsdContract.allowance(signer.address, ROUTER_ADDRESS);
-                        if (aUsdAllowance < aUsdBalance) {
-                            addLog(`Approving aUSD for Pancake`);
-                            const txApp = await aUsdContract.approve(ROUTER_ADDRESS, MaxUint256);
-                            await txApp.wait();
-                        }
-                        const FEES = [100, 500, 3000];
-                        for (const fee of FEES) {
-                            try {
-                                const params = {
-                                    tokenIn: TOKENS.aUSD, tokenOut: TOKENS.USDC,
-                                    fee: fee,
-                                    recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                    amountIn: aUsdBalance, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                                };
-                                tx = await router.exactInputSingle(params);
-                                break;
-                            } catch (e) { }
-                        }
-                    }
-
-                    // --- XAUT SELL STATE UPDATE ---
-
-                    if (tx) {
-                        addLog(`Tx Sent: ${tx.hash}`);
-                        addToast("SELL Order Submitted", "info", tx.hash);
-                        await tx.wait();
-                        addLog(`SELL Confirmed: ${tx.hash}`);
-                        addToast("SELL Confirmed", "success", tx.hash);
-
-                        const posIdx = wallet.positions.findIndex(p => p.symbol === symbol);
-                        if (posIdx !== -1) {
-                            const pos = wallet.positions[posIdx];
-                            const newPositions = [...wallet.positions];
-                            newPositions.splice(posIdx, 1);
-                            const pnl = (currentPrice - pos.entry) * pos.size;
-                            setWallet(prev => ({
-                                ...prev,
-                                usdc: prev.usdc + (pos.size * currentPrice),
-                                positions: newPositions,
-                                history: [{
-                                    symbol: symbol, side: 'SELL', entry: pos.entry, exit: currentPrice, size: pos.size, pnl: pnl, timestamp: Date.now(), txHash: tx.hash
-                                }, ...(prev.history || [])].slice(0, 100)
-                            }));
-                        }
-                    }
-                    return; // Exit XAUT Block
-                } else {
-                    if (tokenBalance == 0) {
-                        if (wallet.positions.some(p => p.symbol === symbol)) {
-                            addLog(`Zero On-Chain Balance. Closing Simulated Position`);
-                            triggerSimulatedSuccess(symbol, 'SELL', currentPrice, 0);
-                            return;
-                        }
-                        addLog(`No balance to sell.`); return;
-                    }
-
-                    const allowance = await tContract.allowance(signer.address, ROUTER_ADDRESS);
-                    if (allowance < tokenBalance) {
-                        addLog(`Approving ${symbol}`);
-                        const approveTx = await tContract.approve(ROUTER_ADDRESS, MaxUint256);
-                        await approveTx.wait();
-                    }
-
-                    addLog(`SELLING ${symbol}`);
-                    // Added 2500 (0.25%) for PancakeSwap specific tier
-                    const FEES = [3000, 2500, 500, 10000, 100];
-                    let success = false;
-                    for (const fee of FEES) {
-                        try {
-                            const params = {
-                                tokenIn: targetToken, tokenOut: TOKENS.USDC,
-                                fee: fee,
-                                recipient: signer.address, deadline: Math.floor(Date.now() / 1000) + 600,
-                                amountIn: tokenBalance, amountOutMinimum: 0, sqrtPriceLimitX96: 0
-                            };
-                            const gasEstimate = await router.exactInputSingle.estimateGas(params);
-                            tx = await router.exactInputSingle(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                            success = true;
-                            break;
-                        } catch (e) { }
-                    }
-
-                    if (!success && symbol !== 'MON-USD') {
-                        addLog(`Direct Sell Failed. Trying Smart Multihop`);
-                        const INTERMEDIARIES = [TOKENS.WMON, TOKENS.ETH];
-                        const ROUTERS = [{ name: "PancakeSwap V3", address: ROUTER_ADDRESS }, { name: "Uniswap V3", address: ROUTER_V3_02 }];
-
-                        for (const routerInfo of ROUTERS) {
-                            if (success) break;
-                            const currentRouter = new Contract(routerInfo.address, ROUTER_ABI, signer);
-                            addLog(`Checking Sell Multihop via ${routerInfo.name}`);
-
-                            // Check allowance for THIS router (Target -> Router)
-                            try {
-                                const currentAllowance = await tContract.allowance(signer.address, routerInfo.address);
-                                if (currentAllowance < tokenBalance) {
-                                    addLog(`Approving ${symbol} for ${routerInfo.name}`);
-                                    const approveTx = await tContract.approve(routerInfo.address, MaxUint256);
-                                    await approveTx.wait();
-                                }
-                            } catch (e) {
-                                console.warn(`Allowance check failed: ${e.message}`);
-                            }
-
-                            for (const midToken of INTERMEDIARIES) {
-                                if (midToken === targetToken) continue;
-                                const midName = midToken === TOKENS.WMON ? "WMON" : "WETH";
-                                console.log(`INITIATING SELL MULTIHOP VIA ${midName} on ${routerInfo.name}...`);
-
-                                // Fee Combos: [Target-Mid Fee, Mid-USDC Fee]
-                                const PATH_FEES = [
-                                    [3000, 3000], [3000, 500], [3000, 100],        // Standard Target
-                                    [10000, 3000], [10000, 500], [10000, 100],     // Volatile Target
-                                    [500, 3000], [500, 500], [500, 100],           // Stable Target
-                                    [100, 3000], [100, 500], [100, 100]            // Ultra-Stable Target
-                                ];
-
-                                for (const [fee1, fee2] of PATH_FEES) {
-                                    try {
-                                        const path = solidityPacked(
-                                            ["address", "uint24", "address", "uint24", "address"],
-                                            [targetToken, fee1, midToken, fee2, TOKENS.USDC]
-                                        );
-                                        const params = {
-                                            path: path,
-                                            recipient: signer.address,
-                                            deadline: Math.floor(Date.now() / 1000) + 600,
-                                            amountIn: tokenBalance,
-                                            amountOutMinimum: 0
-                                        };
-                                        const gasEstimate = await currentRouter.exactInput.estimateGas(params);
-                                        console.log(`MULTIHOP SELL ESTIMATE SUCCESS (${midName} ${fee1}/${fee2}): ${gasEstimate}`);
-                                        tx = await currentRouter.exactInput(params, { gasLimit: (gasEstimate * 12n) / 10n });
-                                        success = true;
-                                        addLog(`Executing Multihop Sell via ${routerInfo.name}`);
-                                        break;
-                                    } catch (e) { }
-                                }
-                                if (success) break;
-                            }
-                        }
-                    }
-                    if (!success) throw new Error("No Liquidity Pool Found (Both Direct & Multihop Failed)");
-
-                    if (tx) {
-                        addLog(`Tx Sent: ${tx.hash}`);
-                        addToast("Order Submitted (On-Chain)", "info", tx.hash);
-                        await tx.wait();
-                        addLog(`Trade Confirmed: ${tx.hash}`);
-                        addToast("Trade Confirmed", "success", tx.hash);
-
-                        const posIdx = wallet.positions.findIndex(p => p.symbol === symbol);
-                        if (posIdx !== -1) {
-                            const pos = wallet.positions[posIdx];
-                            const newPositions = [...wallet.positions];
-                            newPositions.splice(posIdx, 1);
-                            const pnl = (currentPrice - pos.entry) * pos.size;
-                            setWallet(prev => ({
-                                ...prev,
-                                positions: newPositions,
-                                history: [{
-                                    symbol, side: 'SELL', entry: pos.entry, exit: currentPrice, size: pos.size, pnl, timestamp: Date.now(), txHash: tx.hash
-                                }, ...(prev.history || [])].slice(0, 100)
-                            }));
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.error(error);
-            addLog(`Trade Failed: ${error.message}`);
-            addToast(`Trade Failed: ${error.message.substring(0, 30)}...`, "error");
-            setWalletLocked(false);
+    // Persist Wallet state continuously
+    useEffect(() => {
+        if (wallet) {
+            localStorage.setItem(WALLET_DATA_KEY, JSON.stringify(wallet));
         }
-    };
-
-    const getTradePlan = (symbol) => {
-        const currentPrice = pricesRef.current[symbol];
-        if (!currentPrice) return null;
-        const pos = wallet.positions.find(p => p.symbol === symbol);
-        const entry = pos ? pos.entry : currentPrice;
-        return {
-            entry: entry,
-            tp: entry * 1.10,
-            sl: entry * 0.95,
-            dca: [entry * 0.95, entry * 0.90]
-        };
-    };
+    }, [wallet]);
 
     return {
-        timeframe, changeTimeframe,
-        marketStats, prices,
-        wallet, setWallet,
-        activeWallet, setActiveWallet,
-        walletLocked, setWalletLocked, walletAddress, setWalletAddress,
-        logs, toasts, removeToast, addToast, addLog,
-        candles, rsiValues, smaValues, neuralAnalysis, timeToClose,
-        executeTrade, nativeBalance, usdcBalance, autoPilot, setAutoPilot,
-        getTradePlan,
-        createWallet, unlockWallet, lockWallet, walletExists, exportPrivateKey
+        marketStats, prices, wallet, setWallet,
+        activeWallet, walletLocked, walletAddress,
+        logs, toasts, removeToast, addLog,
+        autoPilot, setAutoPilot, slippageTolerance, setSlippageTolerance,
+        executeTrade,
+        createWallet, unlockWallet, lockWallet, walletExists,
+        nativeBalance, usdcBalance, rawBalances,
+        getTradePlan: (sym, price) => calculateDynamicFibStrategy(price, candles[sym] || []),
+        rsiValues, smaValues, candles, changes24h,
+        timeframe, changeTimeframe: (tf) => setTimeframe(tf),
+        neuralAnalysis: {},
+        exportPrivateKey: () => activeWallet ? activeWallet.privateKey : null
     };
 };

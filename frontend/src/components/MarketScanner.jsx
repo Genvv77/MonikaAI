@@ -27,7 +27,7 @@ export default function MarketScanner({ onSelectCoin }) {
         <div className="bg-[#0b0f19] border border-white/10 rounded-xl p-3 flex flex-col h-full overflow-hidden min-h-[150px]">
             <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-1 shrink-0">
                 <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                    Global Sentiment
+                    Global_Sentiment
                 </h3>
             </div>
 
@@ -36,8 +36,8 @@ export default function MarketScanner({ onSelectCoin }) {
                     const score = Math.round(info.score || 50);
 
                     // --- UNIFIED COLOR LOGIC ---
-                    let barColor = "bg-[#5F6FFF]"; // Blue (Neutral 48-54)
-                    if (score >= 55) barColor = "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.4)]";
+                    let barColor = "bg-[#5F6FFF]"; // Blue (Neutral 48-51)
+                    if (score >= 52) barColor = "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.4)]";
                     if (score < 40) barColor = "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]";
                     if (score >= 40 && score < 48) barColor = "bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.4)]";
 

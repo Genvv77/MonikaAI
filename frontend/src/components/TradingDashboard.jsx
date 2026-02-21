@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import html2canvas from 'html2canvas';
 import CustomChart from './CustomChart';
 import MarketTicker from './MarketTicker';
 import CurrentTrades from './CurrentTrades';
@@ -14,9 +15,147 @@ import NeuralEngine from './NeuralEngine';
 import GrokChat from './GrokChat';
 import TutorialOverlay from './TutorialOverlay';
 
+const TradeHistoryTable = ({ trades }) => {
+    const handleShare = async (trade) => {
+        const isProfit = trade.pnl >= 0;
+        const color = isProfit ? '#22c55e' : '#ef4444';
+
+        // Preload image to ensure html2canvas captures it
+        await new Promise((resolve) => {
+            const img = new Image();
+            img.src = '/monika_bg2.png';
+            img.onload = resolve;
+            img.onerror = resolve;
+        });
+
+        // Create a stylized offscreen div
+        const shareCard = document.createElement('div');
+        shareCard.style.position = 'absolute';
+        shareCard.style.left = '-9999px';
+        shareCard.style.top = '-9999px';
+        shareCard.style.width = '800px';
+        shareCard.style.height = '800px';
+        shareCard.style.backgroundImage = `linear-gradient(to top, rgba(10,14,20,1) 0%, rgba(10,14,20,0.9) 40%, rgba(10,14,20,0.3) 100%), url(/monika_bg2.png)`;
+        shareCard.style.backgroundSize = 'cover';
+        shareCard.style.backgroundPosition = 'center';
+        shareCard.style.color = '#ffffff';
+        shareCard.style.fontFamily = 'Inter, system-ui, sans-serif';
+        shareCard.style.display = 'flex';
+        shareCard.style.flexDirection = 'column';
+        shareCard.style.justifyContent = 'flex-end';
+        shareCard.style.padding = '60px';
+        shareCard.style.boxSizing = 'border-box';
+        shareCard.style.overflow = 'hidden';
+
+        const dateStr = new Date(trade.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = new Date(trade.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+        shareCard.innerHTML = `
+            <div style="position: absolute; top: 50px; left: 50px; display: flex; align-items: center; gap: 15px;">
+                <div style="font-size: 22px; font-weight: 800; letter-spacing: 4px; color: #ffffff;">MONIKA AI</div>
+            </div>
+            
+            <div style="position: absolute; top: 50px; right: 50px; text-align: right; opacity: 0.8;">
+                <div style="font-size: 14px; letter-spacing: 2px; color: #9ca3af; margin-bottom: 4px; font-weight: bold; text-transform: uppercase;">monika-ai.xyz/trading</div>
+                <div style="font-size: 14px; color: #d1d5db; font-family: monospace;">${dateStr} ${timeStr}</div>
+            </div>
+            
+            <div style="z-index: 10; width: 100%;">
+                <div style="font-size: 42px; font-weight: 300; color: #e5e7eb; letter-spacing: 2px; margin-bottom: -5px;">
+                    ${trade.symbol.replace('-USD', '')} <span style="color: #6b7280; font-weight: 200;">/ USD</span>
+                </div>
+                <div style="font-size: 130px; font-weight: 900; color: ${color}; text-shadow: 0 0 60px ${color}40, 2px 2px 0px rgba(0,0,0,0.5); margin-bottom: 40px; line-height: 1; letter-spacing: -2px;">
+                    ${isProfit ? '+' : ''}$${Math.abs(trade.pnl).toFixed(2)}
+                </div>
+                
+                <div style="display: flex; gap: 60px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 40px;">
+                    <div style="flex: 1;">
+                        <div style="color: #9ca3af; font-size: 14px; letter-spacing: 2px; margin-bottom: 8px; text-transform: uppercase; font-weight: bold;">Avg. Entry Price</div>
+                        <div style="font-size: 36px; font-weight: 600; font-family: monospace; color: #f3f4f6;">$${trade.entry.toFixed(4)}</div>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="color: #9ca3af; font-size: 14px; letter-spacing: 2px; margin-bottom: 8px; text-transform: uppercase; font-weight: bold;">Avg. Exit Price</div>
+                        <div style="font-size: 36px; font-weight: 600; font-family: monospace; color: #f3f4f6;">$${trade.exit.toFixed(4)}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(shareCard);
+
+        try {
+            const canvas = await html2canvas(shareCard, { backgroundColor: '#0a0e14', scale: 2, useCORS: true, allowTaint: true });
+            const url = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = `Monika_Trade_${trade.symbol}.png`;
+            link.href = url;
+            link.click();
+        } catch (e) {
+            console.error("Failed to capture share card", e);
+        } finally {
+            document.body.removeChild(shareCard);
+        }
+    };
+
+    return (
+        <div className="bg-[#0b0f19] flex flex-col flex-1 border border-gray-800 rounded-xl overflow-hidden min-h-0 shadow-lg">
+            <h2 className="bg-[#0A0E14] text-[10px] font-bold text-gray-500 uppercase tracking-widest p-3 border-b border-gray-800">
+                Trade_History
+            </h2>
+            <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-left text-xs text-gray-400 bg-[#0b0f19]">
+                    <thead className="bg-[#0D1117] sticky top-0 z-10 text-[9px] uppercase tracking-wider text-gray-500 border-b border-gray-800">
+                        <tr>
+                            <th className="p-3 font-semibold">Asset</th>
+                            <th className="p-3 font-semibold">Entry / Exit</th>
+                            <th className="p-3 font-semibold text-right">Net PNL</th>
+                            <th className="p-3 font-semibold text-center">Share</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800/50">
+                        {(!trades || trades.length === 0) ? (
+                            <tr><td colSpan="4" className="p-8 text-center text-gray-600 font-mono text-xs">No closed trades yet.</td></tr>
+                        ) : trades.map((t, idx) => {
+                            const isProfit = t.pnl >= 0;
+                            return (
+                                <tr key={idx} className="hover:bg-white/5 transition-colors group">
+                                    <td className="p-3">
+                                        <div className="font-bold text-gray-200">{t.symbol.replace('-USD', '')}</div>
+                                        <div className="text-[10px] text-gray-600 font-mono">
+                                            {new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                    </td>
+                                    <td className="p-3 font-mono text-gray-300">
+                                        <div className="text-gray-500 text-[10px]">In: <span className="text-gray-300">${t.entry.toFixed(4)}</span></div>
+                                        <div className="text-gray-500 text-[10px]">Out: <span className="text-gray-300">${t.exit.toFixed(4)}</span></div>
+                                    </td>
+                                    <td className={`p-3 font-mono text-right font-bold ${isProfit ? 'text-green-500' : 'text-red-500'}`}>
+                                        {isProfit ? '+' : ''}${(t.pnl).toFixed(2)}
+                                    </td>
+                                    <td className="p-3 text-center">
+                                        <button
+                                            onClick={() => handleShare(t)}
+                                            className="opacity-50 group-hover:opacity-100 hover:text-blue-400 text-gray-500 transition-all p-1"
+                                            title="Share Trade as Image"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                                            </svg>
+                                        </button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
 const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
     const {
-        prices, rsiValues, candles, nativeBalance, usdcBalance, wallet, logs, neuralAnalysis,
+        prices, rsiValues, candles, nativeBalance, usdcBalance, rawBalances, wallet, logs, neuralAnalysis,
         executeTrade, createWallet, unlockWallet, lockWallet, exportPrivateKey,
         walletExists, walletLocked, walletAddress, timeframe, changeTimeframe,
         marketStats, changes24h, smaValues, toasts, removeToast, getTradePlan
@@ -28,6 +167,21 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
     const [showSetup, setShowSetup] = useState(false);
     const [showUnlock, setShowUnlock] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [showWalletDropdown, setShowWalletDropdown] = useState(false);
+    const walletDropdownRef = useRef(null);
+
+    // --- CLICK OUTSIDE TO CLOSE WALLET ---
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (walletDropdownRef.current && !walletDropdownRef.current.contains(event.target)) {
+                setShowWalletDropdown(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const isLockedView = showDisclaimer || showSetup || showUnlock;
 
     // --- AUTOPILOT STATE ---
     const lastTradeTime = useRef(0);
@@ -83,7 +237,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                 let buySignal = false;
                 if (backendSignal === 'BUY') buySignal = true;
                 // FALLBACK: TRUST THE SCORE (If Signal Lagging)
-                if (score >= 55) buySignal = true;
+                if (score >= 52) buySignal = true;
                 // 2. STANDARD BULLISH ENTRY (Legacy - Backup)
                 if (data.trend === 'bullish' && score >= 70) buySignal = true;
 
@@ -181,6 +335,8 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
         <div className="fixed inset-0 w-full h-screen bg-[#070B10] text-gray-300 font-sans selection:bg-green-500/30 overflow-hidden flex flex-col z-[100]">
             {!walletLocked && <TutorialOverlay />}
 
+            {/* --- MENU OVERLAY (DRAWER) REMOVED --- */}
+
             {/* TOASTS */}
             <div className="fixed top-20 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
                 {toasts.map(toast => (
@@ -227,36 +383,138 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
             {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onExportKey={handleExportWithPassword} />}
 
             {/* HEADER */}
-            <header className="h-16 border-b border-gray-800 bg-[#0A0E14] flex items-center justify-between px-6 shrink-0">
-                <div className="flex items-center gap-6">
-                    <h1 className="text-xl font-black tracking-tighter text-white uppercase italic">
-                        <span className="text-green-500">MONIKA</span><span className="text-white">TERMINAL</span>
-                    </h1>
-                </div>
-                <div className="flex items-center gap-4 text-sm font-mono">
-                    {/* SETTINGS BUTTON RESTORED */}
-                    <button
-                        id="export-wallet"
-                        onClick={() => setShowSettings(true)}
-                        className="text-gray-500 hover:text-white transition-colors p-2"
-                        title="Settings & Export"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                    </button>
-
-                    {walletLocked ? (
-                        <button onClick={() => setShowUnlock(true)} className="flex items-center gap-2 bg-yellow-900/20 text-yellow-400 border border-yellow-500/30 px-3 py-1.5 rounded font-bold">Unlock Wallet</button>
-                    ) : (
-                        <div className="flex items-center gap-2 bg-green-900/20 text-green-400 border border-green-500/30 px-3 py-1.5 rounded">
-                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                            {walletAddress?.substring(0, 6)}...{walletAddress?.substring(walletAddress.length - 4)}
+            {!isLockedView && (
+                <header className="h-16 border-b border-gray-800 bg-[#0A0E14] flex items-center justify-between px-6 shrink-0 relative z-[50]">
+                    {/* Radical Brutalist / Authentic Terminal Logo */}
+                    <div className="flex items-center gap-4 w-1/4 select-none">
+                        <div className="flex flex-col relative group cursor-default">
+                            <h1 className="text-[22px] font-black tracking-tighter leading-none lowercase flex items-end">
+                                <span className="text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">monika</span>
+                                <span className="text-green-500 animate-pulse font-mono text-[16px] leading-none mb-0.5 mx-0.5">_</span>
+                                <span className="text-gray-500 font-bold italic opacity-90">terminal</span>
+                            </h1>
+                            <div className="absolute -bottom-1.5 left-0 w-full h-[2px] bg-gradient-to-r from-green-500/50 via-white/10 to-transparent scale-x-0 origin-left group-hover:scale-x-100 transition-transform duration-500"></div>
                         </div>
-                    )}
-                </div>
-            </header>
+                    </div>
+
+                    {/* Brutalist Syntax Navigation */}
+                    <div className="absolute left-1/2 -translate-x-1/2 flex items-center text-[10px] font-mono tracking-[0.2em] font-bold text-gray-600 select-none whitespace-nowrap">
+                        <span className="text-gray-800 font-normal mr-3">{"//"}</span>
+
+                        <a href="https://www.monika-ai.xyz/" className="hover:text-white transition-colors duration-300 lowercase">
+                            sys.home
+                        </a>
+
+                        <span className="text-gray-800 font-normal mx-3">{"//"}</span>
+
+                        <span className="text-green-400 lowercase border border-green-500/20 bg-[#0d1510] px-1.5 py-0.5">
+                            exe.spot
+                        </span>
+
+                        <span className="text-gray-800 font-normal mx-3">{"//"}</span>
+
+                        <span className="text-gray-700/50 lowercase line-through decoration-gray-800 cursor-not-allowed" title="Offline">
+                            null.perps
+                        </span>
+
+                        <span className="text-gray-800 font-normal mx-3">{"//"}</span>
+
+                        <span className="text-gray-700/50 lowercase line-through decoration-gray-800 cursor-not-allowed" title="Offline">
+                            null.games
+                        </span>
+                    </div>
+                    <div className="flex items-center justify-end gap-4 text-sm font-mono w-1/4">
+                        {/* SETTINGS BUTTON RESTORED */}
+                        <button
+                            id="export-wallet"
+                            onClick={() => setShowSettings(true)}
+                            className="text-gray-500 hover:text-white transition-colors p-2"
+                            title="Settings & Export"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                        </button>
+
+                        {walletLocked ? (
+                            <button onClick={() => setShowUnlock(true)} className="flex items-center gap-2 bg-yellow-900/20 text-yellow-400 border border-yellow-500/30 px-3 py-1.5 rounded font-bold">Unlock Wallet</button>
+                        ) : (
+                            <div className="relative" ref={walletDropdownRef}>
+                                <button
+                                    onClick={() => setShowWalletDropdown(!showWalletDropdown)}
+                                    className="flex items-center gap-2 bg-[#0d1510] hover:bg-[#121c16] text-green-400 border border-green-500/30 px-3 py-1.5 transition-all group"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-500/80 group-hover:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                                    <span className="font-mono text-[10px] tracking-widest">{walletAddress?.substring(0, 6)}...{walletAddress?.substring(walletAddress.length - 4)}</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 text-green-500/50 transition-transform ${showWalletDropdown ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                </button>
+
+                                {showWalletDropdown && (() => {
+                                    let totalWorth = usdcBalance || 0;
+                                    const monPrice = prices['MON-USD'] || marketStats['MON-USD']?.price || 0;
+                                    totalWorth += (nativeBalance || 0) * monPrice;
+
+                                    Object.entries(rawBalances || {}).forEach(([sym, amount]) => {
+                                        if (sym !== 'USDC') {
+                                            let p = prices[`${sym}-USD`] || marketStats[`${sym}-USD`]?.price || 0;
+                                            if (sym === 'WMON') p = monPrice;
+                                            if (sym === 'aUSD') p = 1.00;
+                                            totalWorth += amount * p;
+                                        }
+                                    });
+
+                                    return (
+                                        <div className="absolute top-full right-0 mt-2 w-72 bg-[#05070a]/95 backdrop-blur-xl border border-gray-800 shadow-[0_0_30px_rgba(0,0,0,0.8)] p-0 flex flex-col z-[150] font-mono">
+                                            {/* Header Section */}
+                                            <div className="flex justify-between items-center p-4 border-b border-gray-800 bg-gradient-to-b from-[#0d1510]/50 to-transparent">
+                                                <div className="flex flex-col">
+                                                    <span className="text-gray-500 text-[9px] uppercase tracking-[0.2em] font-bold mb-1">Total_Worth</span>
+                                                    <span className="text-green-400 font-bold text-lg">${totalWorth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                </div>
+                                                <button onClick={() => { lockWallet(); setShowWalletDropdown(false); }} className="text-[9px] tracking-widest border border-red-900/50 text-red-500 hover:bg-red-900/20 hover:text-red-400 px-2 py-1 transition-colors uppercase cursor-pointer z-10">
+                                                    LOCK_SYS
+                                                </button>
+                                            </div>
+
+                                            {/* Holdings Section */}
+                                            <div className="flex flex-col p-4 gap-2 bg-[#0a0e14]/50">
+                                                <span className="text-gray-600 text-[9px] uppercase tracking-[0.2em] font-bold mb-2">Active_Assets</span>
+
+                                                <div className="flex justify-between items-center border-b border-gray-800/50 pb-2">
+                                                    <span className="text-gray-300 text-xs font-bold">MON <span className="text-[9px] text-gray-600 font-normal">{"// GAS"}</span></span>
+                                                    <span className="text-gray-400 text-xs">{nativeBalance?.toFixed(4)}</span>
+                                                </div>
+
+                                                {Object.keys(rawBalances || {}).length > 0 ? (
+                                                    Object.entries(rawBalances).map(([sym, amount], idx) => {
+                                                        const priceKey = sym === 'WMON' ? 'MON-USD' : `${sym}-USD`;
+                                                        let currentPrice = prices[priceKey] || marketStats[priceKey]?.price || 0;
+                                                        if (sym === 'aUSD' || sym === 'USDC') currentPrice = 1.00;
+                                                        const usdValue = amount * currentPrice;
+
+                                                        return (
+                                                            <div key={sym} className={`flex justify-between items-center py-2 ${idx !== Object.keys(rawBalances).length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                                                                <span className="text-gray-300 text-xs font-bold">{sym}</span>
+                                                                <div className="flex flex-col items-end">
+                                                                    <span className="text-gray-400 text-xs">{amount.toFixed(4)}</span>
+                                                                    <span className="text-[9px] text-green-500/60 mt-0.5">${usdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })
+                                                ) : (
+                                                    <div className="text-gray-600 text-[10px] italic text-center py-4 bg-black/20 border border-gray-800/50">null_assets_found</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        )}
+                    </div>
+                </header>
+            )}
 
             {/* CONTENT */}
             <div className="flex-1 px-6 py-4 grid grid-cols-12 gap-4 h-[calc(100vh-80px)] overflow-y-auto scrollbar-hide">
@@ -278,12 +536,12 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                             onClick={() => setBotActive(!botActive)}
                             className={`w-full py-3 font-bold rounded shadow uppercase tracking-wider transition-all text-xs flex items-center justify-center gap-2 ${!botActive ? 'bg-green-500 hover:bg-green-400 text-black' : 'bg-red-500 hover:bg-red-400 text-black animate-pulse'}`}
                         >
-                            {botActive ? "STOP ENGINE" : "START ENGINE"}
+                            {botActive ? "STOP_ENGINE" : "START_ENGINE"}
                         </button>
 
                         <div className="flex gap-2">
-                            <button onClick={forceBuy} className="flex-1 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 rounded text-blue-400 text-[10px] font-bold uppercase tracking-wide transition-colors">Force Buy {selectedSymbol.replace('-USD', '')}</button>
-                            <button id="panic-sell" onClick={handlePanicClick} className="flex-1 py-2 bg-red-900/20 hover:bg-red-500/20 border border-red-500/30 rounded text-red-500 text-[10px] font-bold uppercase tracking-wide transition-colors" title="SELL ALL">Panic Sell</button>
+                            <button onClick={forceBuy} className="flex-1 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 rounded text-blue-400 text-[10px] font-bold uppercase tracking-wide transition-colors">Force_Buy_ {selectedSymbol.replace('-USD', '')}</button>
+                            <button id="panic-sell" onClick={handlePanicClick} className="flex-1 py-2 bg-red-900/20 hover:bg-red-500/20 border border-red-500/30 rounded text-red-500 text-[10px] font-bold uppercase tracking-wide transition-colors" title="SELL ALL">Panic_Sell</button>
                         </div>
                     </div>
                 </div>
@@ -294,7 +552,7 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                     </div>
                     <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0">
                         <div className="flex flex-col gap-4 h-full min-h-0">
-                            <div className="flex-1 bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden flex flex-col min-h-0 shadow-lg relative">
+                            <div className="bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden flex flex-col shadow-lg relative shrink-0 h-[480px]">
 
                                 {/* FIX: Pass onClosePosition and onRowClick */}
                                 <DetailedPositionsTable
@@ -305,15 +563,16 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                                     onRowClick={setSelectedSymbol}
                                 />
                             </div>
+                            <TradeHistoryTable trades={wallet?.tradeHistory} />
                         </div>
 
                         <div className="flex flex-col gap-4 min-h-0 h-full">
                             <div id="price-chart" className="h-[480px] bg-[#0D1117] border border-gray-800 rounded-xl overflow-hidden relative shadow-2xl shrink-0">
-                                <CustomChart key={selectedSymbol} symbol={selectedSymbol} position={activePosition} tradePlan={getTradePlan(selectedSymbol)} currentPrice={activeCoinData.price || prices[selectedSymbol]} candlesData={candles[selectedSymbol]} smaData={smaValues[selectedSymbol]} rsiValue={rsiValues[selectedSymbol]} markers={[]} activeTimeframe={timeframe} onTimeframeChange={changeTimeframe} availablePairs={[]} onSelectPair={setSelectedSymbol} />
+                                <CustomChart key={selectedSymbol + '-' + timeframe} symbol={selectedSymbol} position={activePosition} tradePlan={getTradePlan(selectedSymbol, activeCoinData.price || prices[selectedSymbol])} currentPrice={activeCoinData.price || prices[selectedSymbol]} candlesData={candles[selectedSymbol]} smaData={smaValues[selectedSymbol]} rsiValue={rsiValues[selectedSymbol]} markers={[]} activeTimeframe={timeframe} onTimeframeChange={changeTimeframe} availablePairs={[]} onSelectPair={setSelectedSymbol} />
                             </div>
                             <div id="logs-panel" className="flex-1 bg-[#0D1117] border border-gray-800 p-2 rounded-xl flex flex-col min-h-0 bg-opacity-50 backdrop-blur-sm">
                                 <h2 className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-1 ml-1 flex justify-between">
-                                    <span>System Logs</span>
+                                    <span>System_Logs</span>
                                     <span className={botActive ? "text-green-500 animate-pulse" : "text-gray-600"}>{botActive ? "AUTO-PILOT ON" : "MANUAL MODE"}</span>
                                 </h2>
                                 <div className="flex-1 bg-black/20 rounded-lg p-2 text-[10px] font-mono text-gray-400 overflow-y-auto flex flex-col-reverse shadow-inner">
@@ -347,14 +606,17 @@ const TradingDashboard = ({ userAddress, handleConnect, handleDisconnect }) => {
                     </a>
                 </footer>
             </div>
+
             {/* --- CHAT AGENT INTEGRATION --- */}
-            <GrokChat
-                marketStats={marketStats}
-                selectedSymbol={selectedSymbol}
-                wallet={wallet}
-                neuralAnalysis={neuralAnalysis}
-                rsiValues={rsiValues}
-            />
+            {!isLockedView && (
+                <GrokChat
+                    marketStats={marketStats}
+                    selectedSymbol={selectedSymbol}
+                    wallet={wallet}
+                    neuralAnalysis={neuralAnalysis}
+                    rsiValues={rsiValues}
+                />
+            )}
         </div >
     );
 };

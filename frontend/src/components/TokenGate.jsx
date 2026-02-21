@@ -32,6 +32,15 @@ const TokenGate = ({ children }) => {
       setLoading(true);
       setErrorMsg("");
 
+      // 0. Request Account Access (This triggers the MetaMask popup)
+      try {
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+      } catch (accountError) {
+        setErrorMsg("Failed to connect to MetaMask. Please unlock it and try again.");
+        setLoading(false);
+        return;
+      }
+
       // 1. Force Network Switch (Monad Mainnet)
       const MONAD_CHAIN_ID = '143'; // 143
       try {
