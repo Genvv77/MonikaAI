@@ -18,10 +18,13 @@ export default function NeuralEngine({ selectedSymbol }) {
                     : json;
                 setMarketData(dataObject);
                 setLoading(false);
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error("NeuralEngine fetch error:", e);
+                setLoading(false); // Fix for infinite "Syncing..." hang
+            }
         };
         fetchStatus();
-        const interval = setInterval(fetchStatus, 2000);
+        const interval = setInterval(fetchStatus, 10000); // Reduced polling stress
         return () => clearInterval(interval);
     }, []);
 

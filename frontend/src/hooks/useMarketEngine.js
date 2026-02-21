@@ -729,9 +729,9 @@ export const useMarketEngine = (initialBalance = 1000) => {
         fetchBrainData();
         fetchTimeframeChanges();
 
-        const priceInterval = setInterval(fetchPrices, 2000);
-        const brainInterval = setInterval(fetchBrainData, 10000);
-        const changesInterval = setInterval(fetchTimeframeChanges, 60000);
+        const priceInterval = setInterval(fetchPrices, 5000); // Decelerated from 2000
+        const brainInterval = setInterval(fetchBrainData, 15000); // Decelerated from 10000
+        const changesInterval = setInterval(fetchTimeframeChanges, 60000); // 1 minute is fine
 
         return () => {
             clearInterval(priceInterval);

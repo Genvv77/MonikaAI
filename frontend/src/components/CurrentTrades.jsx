@@ -14,10 +14,13 @@ export default function CurrentTrades() {
                 const res = await fetch(PORTFOLIO_URL);
                 const json = await res.json();
                 setPortfolio(json);
-            } catch (e) { console.error("Portfolio offline"); }
+            } catch (e) {
+                console.error("Portfolio fetch error:", e);
+                // Cannot clear active trades safely here since it might be a transient 502
+            }
         };
         fetchPortfolio();
-        const interval = setInterval(fetchPortfolio, 2000);
+        const interval = setInterval(fetchPortfolio, 10000); // Reduced polling stress
         return () => clearInterval(interval);
     }, []);
 

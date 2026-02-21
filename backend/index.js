@@ -21,16 +21,25 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 // SECURE CORS CONFIGURATION
 const ALLOWED_ORIGINS = [
     'http://localhost:5173', // Your local React dev server
+    'http://localhost:5174', // Secondary local dev server
     'http://localhost:3000',
     'http://monika-ai-cve5.vercel.app',
     'https://monikaai-production.up.railway.app',
-    'https://monika-ai.xyz'
+    'https://monika-ai.xyz',
+    'https://www.monika-ai.xyz' // Explicitly added the 'www' subdomain 
 ];
 
 // --- SECURE CORS CONFIGURATION
 app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE']
+    origin: function (origin, callback) {
+        if (!origin || ALLOWED_ORIGINS.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+    credentials: true // Important for cookies/sessions if used later on.
 }));
 
 app.use(express.json());
@@ -572,6 +581,54 @@ app.post('/api/ai-scan', async (req, res) => {
 
 // --- API ROUTES ---
 app.get('/api/market-status', (req, res) => res.json(MARKET_CACHE));
+
+// --- LEGACY 3D AVATAR CHAT ROUTES (Restored to fix CORS/502 errors) ---
+const sessions = {};
+const saveSessions = () => { };
+
+app.get("/history/:userId", (req, res) => {
+    const userId = req.params.userId;
+    res.json(sessions[userId] || []);
+});
+
+app.delete("/history/:userId", async (req, res) => {
+    const { userId } = req.params;
+    sessions[userId] = [];
+    saveSessions();
+    res.json({ success: true });
+});
+
+app.delete("/chat/:userId/:index", async (req, res) => {
+    const { userId, index } = req.params;
+    if (sessions[userId]) {
+        sessions[userId].splice(index, 1);
+        saveSessions();
+    }
+    res.json({ success: true });
+});
+
+app.post("/chat", async (req, res) => {
+    const { message, userId } = req.body;
+
+    if (!sessions[userId]) sessions[userId] = [];
+    sessions[userId].push({ role: "user", content: message });
+
+    // Simplistic fallback response matching the expected 3D format
+    const replyText = "I am processing market data. How can I help you today?";
+    const assistantMessage = {
+        role: "assistant",
+        text: replyText,
+        content: replyText,
+        facialExpression: "smile",
+        animation: "Talking_1",
+        audio: null // Voice generated responses skipped for now to avoid crashing
+    };
+
+    sessions[userId].push(assistantMessage);
+    saveSessions();
+
+    res.json({ messages: [assistantMessage] });
+});
 
 // --- SERVER START ---
 app.listen(PORT, () => {

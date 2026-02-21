@@ -16,10 +16,12 @@ export default function MarketScanner({ onSelectCoin }) {
                     ? json.reduce((acc, item) => ({ ...acc, [item.symbol]: item }), {})
                     : json;
                 setData(dataObject);
-            } catch (e) { }
+            } catch (e) {
+                console.error("MarketScanner fetch error:", e);
+            }
         };
         fetchStatus();
-        const interval = setInterval(fetchStatus, 3000);
+        const interval = setInterval(fetchStatus, 15000); // Reduced polling stress
         return () => clearInterval(interval);
     }, []);
 

@@ -34,6 +34,8 @@ export const ChatProvider = ({ children }) => {
         setMessages(formattedHistory);
       } catch (e) {
         console.error("Erreur historique:", e);
+        // Fallback: render an empty chat history array if backend is down
+        setMessages([{ role: "assistant", text: "Offline Mode: Cannot fetch history." }]);
       }
     };
     fetchHistory();
