@@ -715,6 +715,30 @@ app.post('/api/ai-scan', async (req, res) => {
 // --- API ROUTES ---
 app.get('/api/market-status', (req, res) => res.json(MARKET_CACHE));
 
+// --- TEMPORARY DEBUG: Check TTS status (REMOVE AFTER DEBUGGING) ---
+app.get('/debug-tts', async (req, res) => {
+    const key = (process.env.ELEVEN_LABS_API_KEY || "").trim();
+    const result = {
+        keyExists: !!key,
+        keyLength: key.length,
+        keyPrefix: key.substring(0, 8),
+        voiceId: VOICE_ID
+    };
+    // Try a tiny TTS call
+    try {
+        const ttsResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "xi-api-key": key },
+            body: JSON.stringify({ text: "hi", model_id: "eleven_multilingual_v2", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+        });
+        result.ttsStatus = ttsResponse.status;
+        result.ttsOk = ttsResponse.ok;
+        if (!ttsResponse.ok) result.ttsError = await ttsResponse.text().catch(() => '');
+        else result.audioBytes = (await ttsResponse.arrayBuffer()).byteLength;
+    } catch (e) { result.ttsException = e.message; }
+    res.json(result);
+});
+
 // --- LEGACY 3D AVATAR CHAT ROUTES (Restored to fix CORS/502 errors) ---
 const sessions = {};
 const saveSessions = () => { };
