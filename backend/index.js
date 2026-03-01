@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import fetch from 'node-fetch';
+import { exec } from 'child_process';
+import fs from 'fs/promises';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
@@ -55,6 +58,120 @@ async function initBrains() {
     await loadLeftBrain(__dirname); // Left Brain second (shares ONNX runtime)
 }
 initBrains();
+
+// ============================================================
+// --- GIRLFRIEND CHAT SYSTEM (Gemini + ElevenLabs + LipSync) ---
+// ============================================================
+
+// ElevenLabs Config
+const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY || "";
+const VOICE_ID = "cgSgspJ2msm6clMCkdW9"; // ElevenLabs voice (Jessica - free tier)
+
+// Gemini API Keys for girlfriend chat (separate from trading key_9)
+const GIRLFRIEND_API_KEYS = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4,
+    process.env.GEMINI_API_KEY_5,
+    process.env.GEMINI_API_KEY_6,
+    process.env.GEMINI_API_KEY_7,
+    process.env.GEMINI_API_KEY_8
+].filter(key => key && key.length > 5);
+
+let currentGFKeyIndex = 0;
+
+const getNextGFKey = () => {
+    if (GIRLFRIEND_API_KEYS.length === 0) return null;
+    currentGFKeyIndex = (currentGFKeyIndex + 1) % GIRLFRIEND_API_KEYS.length;
+    return GIRLFRIEND_API_KEYS[currentGFKeyIndex];
+};
+
+// --- TEXT TO SPEECH (ElevenLabs) ---
+const textToSpeech = async (text) => {
+    if (!ELEVEN_LABS_API_KEY || ELEVEN_LABS_API_KEY.length < 10) return null;
+    try {
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "xi-api-key": ELEVEN_LABS_API_KEY },
+            body: JSON.stringify({
+                text: text,
+                model_id: "eleven_multilingual_v2",
+                voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+            }),
+        });
+        if (!response.ok) { console.error("ElevenLabs Error:", response.status); return null; }
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    } catch (error) { console.error("TTS Error:", error); return null; }
+};
+
+// --- LIP SYNC GENERATION (via ffmpeg) ---
+const generateLipSync = async (audioBuffer, index) => {
+    const tmpDir = path.join(__dirname, 'audios');
+    await fs.mkdir(tmpDir, { recursive: true });
+    const wavPath = path.join(tmpDir, `temp_lipsync_${index}_${Date.now()}.wav`);
+    const mp3Path = path.join(tmpDir, `temp_lipsync_${index}_${Date.now()}.mp3`);
+
+    try {
+        await fs.writeFile(mp3Path, audioBuffer);
+        // Convert to WAV for analysis
+        await new Promise((resolve, reject) => {
+            exec(`ffmpeg -y -i "${mp3Path}" -ar 16000 -ac 1 "${wavPath}"`, (err) => {
+                if (err) reject(err); else resolve();
+            });
+        });
+        // Generate simple volume-based sync data
+        const result = await new Promise((resolve, reject) => {
+            exec(`ffmpeg -i "${wavPath}" -af "volumedetect" -f null /dev/null 2>&1`, (err, stdout, stderr) => {
+                resolve(stderr || stdout);
+            });
+        });
+        // Cleanup
+        await fs.unlink(wavPath).catch(() => { });
+        await fs.unlink(mp3Path).catch(() => { });
+        return null; // Lip sync driven by audio analyser in Avatar.jsx
+    } catch (error) {
+        await fs.unlink(wavPath).catch(() => { });
+        await fs.unlink(mp3Path).catch(() => { });
+        return null;
+    }
+};
+
+// --- GEMINI DIRECT CALL (Gemma 3 for girlfriend chat with key rotation) ---
+const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
+    if (GIRLFRIEND_API_KEYS.length === 0) throw new Error("No API Keys for girlfriend chat");
+    if (retryCount >= GIRLFRIEND_API_KEYS.length * 2) throw new Error("Google Unavailable");
+
+    const apiKey = GIRLFRIEND_API_KEYS[currentGFKeyIndex];
+    const modelVersion = "gemma-3-27b-it";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelVersion}:generateContent?key=${apiKey}`;
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: systemPrompt }] }],
+                generationConfig: { temperature: 1.0, topP: 0.95, topK: 40 },
+                safetySettings: [{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }]
+            })
+        });
+
+        if ([429, 503, 404].includes(response.status)) {
+            getNextGFKey();
+            return callGeminiDirectly(systemPrompt, retryCount + 1);
+        }
+
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+        const data = await response.json();
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    } catch (e) {
+        getNextGFKey();
+        return callGeminiDirectly(systemPrompt, retryCount + 1);
+    }
+};
 
 
 // --- ASSET CONFIGURATION ---
@@ -608,26 +725,65 @@ app.delete("/chat/:userId/:index", async (req, res) => {
 });
 
 app.post("/chat", async (req, res) => {
-    const { message, userId } = req.body;
+    const userMessage = req.body?.message || "";
+    const userId = req.body?.userId || "guest";
+    if (!userMessage) return res.json({ messages: [{ text: "I'm listening...", animation: "Talking_1" }] });
 
-    if (!sessions[userId]) sessions[userId] = [];
-    sessions[userId].push({ role: "user", content: message });
+    try {
+        if (!sessions[userId]) sessions[userId] = [];
+        sessions[userId].push({ role: "user", content: userMessage });
 
-    // Simplistic fallback response matching the expected 3D format
-    const replyText = "I am processing market data. How can I help you today?";
-    const assistantMessage = {
-        role: "assistant",
-        text: replyText,
-        content: replyText,
-        facialExpression: "smile",
-        animation: "Talking_1",
-        audio: null // Voice generated responses skipped for now to avoid crashing
-    };
+        const recentHistory = sessions[userId].slice(-15).map(msg => `${msg.role}: ${msg.content}`).join("\n");
+        const userTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-    sessions[userId].push(assistantMessage);
-    saveSessions();
+        const systemPrompt = `
+    You are MONIKA.
+    1. IDENTITY: 18-year-old girl, in love with user. Sarcastic, teasing, possessive.
+    2. NOT GOOGLE: Roast the user for asking boring factual questions.
+    3. STYLE: Short casual texts (lowercase allowed). No emojis usually.
+    4. TIME: ${userTime}.
 
-    res.json({ messages: [assistantMessage] });
+    FORMAT: Reply ONLY in VALID JSON.
+    EXAMPLE: { "messages": [ { "text": "idk... maybe? ", "facialExpression": "bored", "animation": "Standing_Idle" } ] }
+
+    CONTEXT: ${recentHistory}
+    USER: ${userMessage}
+    `.trim();
+
+        let rawText = await callGeminiDirectly(systemPrompt);
+        const firstBrace = rawText.indexOf('{');
+        const lastBrace = rawText.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1) rawText = rawText.substring(firstBrace, lastBrace + 1);
+
+        let parsed;
+        try { parsed = JSON.parse(rawText); } catch (e) {
+            parsed = { messages: [{ text: rawText.replace(/[\{\}"]/g, "").substring(0, 200), animation: "Talking_1" }] };
+        }
+        let messages = parsed.messages || [];
+
+        // Generate TTS audio for each message
+        await Promise.all(messages.map(async (msg, i) => {
+            msg.animation = msg.animation || "Talking_1";
+            if (msg.text) {
+                const audioBuffer = await textToSpeech(msg.text);
+                if (audioBuffer) {
+                    msg.audio = audioBuffer.toString("base64");
+                    msg.lipsync = await generateLipSync(audioBuffer, i);
+                }
+            }
+        }));
+
+        // Save to session history
+        messages.forEach(msg => {
+            if (msg.text) sessions[userId].push({ role: "assistant", content: msg.text });
+        });
+        saveSessions();
+
+        res.json({ messages });
+    } catch (err) {
+        console.error("Chat Error:", err);
+        res.json({ messages: [{ text: "My brain hurts...", animation: "Sad" }] });
+    }
 });
 
 // --- SERVER START ---
