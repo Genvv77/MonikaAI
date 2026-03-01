@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import dotenv from 'dotenv';
-import fetch from 'node-fetch';
 import { exec } from 'child_process';
 import fs from 'fs/promises';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -142,7 +141,7 @@ const generateLipSync = async (audioBuffer, index) => {
 // --- GEMINI DIRECT CALL (Gemma 3 for girlfriend chat with key rotation) ---
 const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
     if (GIRLFRIEND_API_KEYS.length === 0) throw new Error("No API Keys for girlfriend chat");
-    if (retryCount >= GIRLFRIEND_API_KEYS.length * 2) throw new Error("Google Unavailable");
+    if (retryCount >= GIRLFRIEND_API_KEYS.length * 2) throw new Error("Google Unavailable after all retries");
 
     const apiKey = GIRLFRIEND_API_KEYS[currentGFKeyIndex];
     const modelVersion = "gemma-3-27b-it";
@@ -160,15 +159,21 @@ const callGeminiDirectly = async (systemPrompt, retryCount = 0) => {
         });
 
         if ([429, 503, 404].includes(response.status)) {
+            console.warn(`Gemini GF Chat: ${response.status} on key index ${currentGFKeyIndex}, rotating...`);
             getNextGFKey();
             return callGeminiDirectly(systemPrompt, retryCount + 1);
         }
 
-        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            console.error(`Gemini GF Chat Error: ${response.status} — ${errText.slice(0, 200)}`);
+            throw new Error(`API Error: ${response.status}`);
+        }
 
         const data = await response.json();
         return data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
     } catch (e) {
+        console.error(`Gemini GF Chat Exception (retry ${retryCount}):`, e.message);
         getNextGFKey();
         return callGeminiDirectly(systemPrompt, retryCount + 1);
     }
@@ -782,7 +787,7 @@ app.post("/chat", async (req, res) => {
 
         res.json({ messages });
     } catch (err) {
-        console.error("Chat Error:", err);
+        console.error("Chat Error:", err.message || err);
         res.json({ messages: [{ text: "My brain hurts...", animation: "Sad" }] });
     }
 });
