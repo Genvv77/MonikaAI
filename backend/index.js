@@ -67,7 +67,7 @@ initBrains();
 const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY || "";
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"; // ElevenLabs voice (Jessica - free tier)
 
-// Gemini API Keys for girlfriend chat (separate from trading key_9)
+// Gemini API Keys for girlfriend chat (keys 1-8 preferred, key_9 as fallback)
 const GIRLFRIEND_API_KEYS = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -76,7 +76,8 @@ const GIRLFRIEND_API_KEYS = [
     process.env.GEMINI_API_KEY_5,
     process.env.GEMINI_API_KEY_6,
     process.env.GEMINI_API_KEY_7,
-    process.env.GEMINI_API_KEY_8
+    process.env.GEMINI_API_KEY_8,
+    process.env.GEMINI_API_KEY_9  // Fallback: also used by trading, but ensures production works
 ].filter(key => key && key.length > 5);
 
 let currentGFKeyIndex = 0;
