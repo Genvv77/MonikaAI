@@ -89,21 +89,31 @@ const getNextGFKey = () => {
 
 // --- TEXT TO SPEECH (ElevenLabs) ---
 const textToSpeech = async (text) => {
-    if (!ELEVEN_LABS_API_KEY || ELEVEN_LABS_API_KEY.length < 10) return null;
+    const key = ELEVEN_LABS_API_KEY.trim();
+    if (!key || key.length < 10) {
+        console.warn("TTS SKIP: ElevenLabs key missing or too short:", key.length);
+        return null;
+    }
     try {
+        console.log(`TTS: Calling ElevenLabs for "${text.substring(0, 30)}..." (key: ${key.substring(0, 8)}...)`);
         const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "xi-api-key": ELEVEN_LABS_API_KEY },
+            headers: { "Content-Type": "application/json", "xi-api-key": key },
             body: JSON.stringify({
                 text: text,
                 model_id: "eleven_multilingual_v2",
                 voice_settings: { stability: 0.5, similarity_boost: 0.75 }
             }),
         });
-        if (!response.ok) { console.error("ElevenLabs Error:", response.status); return null; }
+        if (!response.ok) {
+            const errBody = await response.text().catch(() => '');
+            console.error(`TTS ERROR: ElevenLabs returned ${response.status}: ${errBody.slice(0, 200)}`);
+            return null;
+        }
         const arrayBuffer = await response.arrayBuffer();
+        console.log(`TTS SUCCESS: Got ${arrayBuffer.byteLength} bytes of audio`);
         return Buffer.from(arrayBuffer);
-    } catch (error) { console.error("TTS Error:", error); return null; }
+    } catch (error) { console.error("TTS EXCEPTION:", error.message); return null; }
 };
 
 // --- LIP SYNC GENERATION (via ffmpeg) ---
